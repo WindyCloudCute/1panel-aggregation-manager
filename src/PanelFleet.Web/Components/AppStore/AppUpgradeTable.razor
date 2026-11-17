@@ -43,6 +43,7 @@ else
                                    aria-label="选择 @row.App.Name"
                                    checked="@selected"
                                    disabled="@(!row.CanSelect || Busy)"
+                                   title="@(row.CanSelect ? "选择该应用" : "无可用升级版本，不可勾选")"
                                    @onchange="() => OnToggle.InvokeAsync(row)" />
                         </td>
                         <td>
@@ -74,7 +75,8 @@ else
                         <td class="action-col">
                             <button class="btn"
                                     type="button"
-                                    disabled="@(Busy || !row.CanSelect)"
+                                    disabled="@Busy"
+                                    title="@(row.CanSelect ? "升级该应用到最新版本" : "未查询到可用升级版本；点击查看提示")"
                                     @onclick="() => OnUpgrade.InvokeAsync(row)">
                                 升级
                             </button>

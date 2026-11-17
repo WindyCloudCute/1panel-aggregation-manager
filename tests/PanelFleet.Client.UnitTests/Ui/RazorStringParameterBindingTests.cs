@@ -58,6 +58,20 @@ public sealed class RazorStringParameterBindingTests
                     public string? Status { get; set; }
                 }
                 """,
+            ["TerminalPanel.razor"] = """
+                @code {
+                    [Parameter]
+                    public string? Container { get; set; }
+                }
+                """,
+            ["Drawer.razor"] = """
+                <TerminalPanel Container="ContainerName" />
+                <TerminalPanel Container="@ContainerName" />
+                @code {
+                    [Parameter]
+                    public string? ContainerName { get; set; }
+                }
+                """,
             ["Page.razor"] = """
                 <StatusBadge Status="row.Status" />
                 <StatusBadge Status="@row.Status" />
@@ -70,12 +84,14 @@ public sealed class RazorStringParameterBindingTests
         var declarations = RazorBindingScanner.ReadStringParameters(sources);
         var violations = RazorBindingScanner.Scan(sources, declarations);
 
-        Assert.Equal(3, violations.Count);
+        Assert.Equal(4, violations.Count);
+        Assert.Contains(violations, static v => v.Contains("Container=\"ContainerName\"", StringComparison.Ordinal));
         Assert.Contains(violations, static v => v.Contains("Status=\"row.Status\"", StringComparison.Ordinal));
         Assert.Contains(violations, static v => v.Contains("Status=\"_status\"", StringComparison.Ordinal));
         Assert.Contains(violations, static v => v.Contains("Text=\"string.Empty\"", StringComparison.Ordinal));
         // 正确绑定与合法字面量常量不得误报。
         Assert.DoesNotContain(violations, static v => v.Contains("@row.Status", StringComparison.Ordinal));
+        Assert.DoesNotContain(violations, static v => v.Contains("@ContainerName", StringComparison.Ordinal));
         Assert.DoesNotContain(violations, static v => v.Contains("Label=\"CPU\"", StringComparison.Ordinal));
         Assert.DoesNotContain(violations, static v => v.Contains("Text=\"已停止\"", StringComparison.Ordinal));
     }
@@ -113,6 +129,11 @@ internal static class RazorBindingScanner
     // [Parameter]（可带其它特性）public string / string? Prop { get; ... }
     private static readonly Regex StringParameterDeclaration = new(
         @"\[Parameter[^\]]*\]\s*(?:\[[^\]]*\]\s*)*public\s+string\??\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{",
+        RegexOptions.Compiled);
+
+    // 任意类成员声明（字段/属性）：用于识别「Attr=\"ContainerName\"」这种引用本文件成员的写法。
+    private static readonly Regex MemberDeclaration = new(
+        @"(?:\[Parameter[^\]]*\]\s*(?:\[[^\]]*\]\s*)*)?(?:public|private|protected|internal)\s+(?:static\s+)?(?:readonly\s+)?[A-Za-z_][A-Za-z0-9_\?<>,.\[\]\s]*?\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\{|;|=)",
         RegexOptions.Compiled);
 
     // 组件标签：首字母大写的标签名后必须跟空白、/ 或 >（排除泛型 <T> 与全限定名）。
@@ -159,6 +180,18 @@ internal static class RazorBindingScanner
         return result;
     }
 
+    /// <summary>读取文件内声明的成员名（字段/属性；含组件参数）。</summary>
+    public static HashSet<string> ReadDeclaredMembers(string text)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Match match in MemberDeclaration.Matches(StripComments(text)))
+        {
+            result.Add(match.Groups["name"].Value);
+        }
+
+        return result;
+    }
+
     /// <summary>返回人类可读的违规列表（文件: 标签属性片段）。</summary>
     public static List<string> Scan(
         IReadOnlyDictionary<string, string> sources,
@@ -174,6 +207,7 @@ internal static class RazorBindingScanner
         {
             var fileName = Path.GetFileName(path);
             var stripped = StripComments(text);
+            var declaredMembers = ReadDeclaredMembers(stripped);
             foreach (Match tagStart in ComponentTagStart.Matches(stripped))
             {
                 var componentName = tagStart.Groups["name"].Value;
@@ -201,7 +235,7 @@ internal static class RazorBindingScanner
                             ? attribute.Groups["sq"].Value
                             : attribute.Groups["bare"].Value;
 
-                    if (IsMissingAt(value)
+                    if ((IsMissingAt(value) || IsDeclaredMemberReference(value, declaredMembers))
                         && !Exemptions.Contains((componentName, attribute.Groups["name"].Value)))
                     {
                         var line = CountLine(text, tagStart.Index);
@@ -213,6 +247,19 @@ internal static class RazorBindingScanner
         }
 
         return violations;
+    }
+
+    /// <summary>
+    /// 值是否是「本文件已声明的成员名」：<c>&lt;TerminalPanel Container="ContainerName" /&gt;</c>
+    /// 里的 ContainerName 是页面参数，缺 @ 会被当成字面量，必须报违规。
+    /// </summary>
+    internal static bool IsDeclaredMemberReference(string rawValue, IReadOnlySet<string> declaredMembers)
+    {
+        var value = rawValue.Trim();
+        return value.Length > 0
+            && (char.IsLetter(value[0]) || value[0] == '_')
+            && value.All(static c => char.IsLetterOrDigit(c) || c == '_')
+            && declaredMembers.Contains(value);
     }
 
     /// <summary>

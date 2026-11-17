@@ -268,6 +268,7 @@ else
                     <p class="muted small">
                         汇总所有启用节点的可升级应用（跨节点只读聚合）；勾选后可一次提交批量升级。
                         执行时按节点顺序串行升级，任一应用失败即停止，不自动重试、不回滚。
+                        「无可用版本」的行不可勾选——通常是 1Panel 没有返回升级版本，可点「刷新可升级」重试。
                     </p>
 
                     @if (!string.IsNullOrWhiteSpace(_upgradeTabError))
@@ -1467,11 +1468,30 @@ else
         _installedDetailError = null;
     }
 
-    private Task OpenUpgradeAsync(InstalledAppItem app) =>
-        OpenUpgradeForAsync(_nodeId?.Value, CurrentNode?.Name, app, knownLatest: null);
+    private Task OpenUpgradeAsync(InstalledAppItem app)
+    {
+        if (_nodeId is null)
+        {
+            // 聚合模式（全部节点）下「已安装应用」不归属单一节点，升级必须先确定节点，
+            // 之前这里静默 return，用户点「升级」完全没反应。
+            _operationError = "升级需要先选择具体节点：请在左侧树选择节点，或切到「可升级」标签做跨节点批量升级。";
+            return Task.CompletedTask;
+        }
 
-    private Task UpgradeCandidateAsync(AppUpgradeCandidate row) =>
-        OpenUpgradeForAsync(row.NodeId, row.NodeName, row.App, row.Latest);
+        return OpenUpgradeForAsync(_nodeId.Value.Value, CurrentNode?.Name, app, knownLatest: null);
+    }
+
+    private Task UpgradeCandidateAsync(AppUpgradeCandidate row)
+    {
+        if (row.Latest is null)
+        {
+            _operationError = $"「{row.App.Name}」没有查询到可用升级版本"
+                + (string.IsNullOrWhiteSpace(row.Error) ? "（1Panel 未返回升级版本列表），请先点「刷新可升级」重试；若仍为空，请到 1Panel 面板检查该应用更新。" : "：" + row.Error);
+            return Task.CompletedTask;
+        }
+
+        return OpenUpgradeForAsync(row.NodeId, row.NodeName, row.App, row.Latest);
+    }
 
     private async Task OpenUpgradeForAsync(Guid? nodeId, string? nodeName, InstalledAppItem app, AppUpdateVersion? knownLatest)
     {
@@ -1599,7 +1619,9 @@ else
             .ToArray();
         if (rows.Length == 0)
         {
-            _operationError = "请先勾选要升级的应用。";
+            _operationError = _upgradeRows.Any(row => row.CanSelect)
+                ? "请先勾选要升级的应用。"
+                : "当前没有可勾选的应用：列表里的应用都没有查询到可用升级版本，请先点「刷新可升级」重试，或到 1Panel 面板检查更新。";
             return;
         }
 

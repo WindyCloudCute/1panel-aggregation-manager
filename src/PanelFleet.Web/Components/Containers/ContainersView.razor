@@ -437,6 +437,8 @@ else
     private string? _nameFilter;
     private int _page = 1;
     private bool _loading;
+    private int _containersLoadVersion;
+    private int _composeLoadVersion;
     private string? _error;
     private string? _composeError;
 
@@ -658,11 +660,21 @@ else
 
     private async Task LoadContainersAsync()
     {
+        // 竞态守卫：节点/筛选快速切换时，只允许「最后一次」请求写回界面，
+        // 避免节点 1 的慢请求在节点 2 的请求之后返回、把节点 2 的数据覆盖掉。
+        var version = ++_containersLoadVersion;
+        var query = BuildQuery();
         _loading = true;
         _error = null;
         try
         {
-            _containers = await ContainerService.ListAsync(BuildQuery(), Token);
+            var page = await ContainerService.ListAsync(query, Token);
+            if (version != _containersLoadVersion)
+            {
+                return;
+            }
+
+            _containers = page;
             PruneSelection(_containers.Rows);
         }
         catch (OperationCanceledException)
@@ -670,40 +682,66 @@ else
         }
         catch (ContainerNodeNotFoundException exception)
         {
-            _error = exception.Message;
+            if (version == _containersLoadVersion)
+            {
+                _error = exception.Message;
+            }
         }
         catch (Exception exception)
         {
-            _error = "加载容器失败：" + exception.Message;
+            if (version == _containersLoadVersion)
+            {
+                _error = "加载容器失败：" + exception.Message;
+            }
         }
         finally
         {
-            _loading = false;
+            if (version == _containersLoadVersion)
+            {
+                _loading = false;
+            }
         }
     }
 
     private async Task LoadComposeAsync()
     {
+        var version = ++_composeLoadVersion;
+        var query = BuildQuery();
         _loading = true;
         _composeError = null;
         try
         {
-            _compose = await ContainerService.ListComposeAsync(BuildQuery(), Token);
+            var page = await ContainerService.ListComposeAsync(query, Token);
+            if (version != _composeLoadVersion)
+            {
+                return;
+            }
+
+            _compose = page;
         }
         catch (OperationCanceledException)
         {
         }
         catch (ContainerNodeNotFoundException exception)
         {
-            _composeError = exception.Message;
+            if (version == _composeLoadVersion)
+            {
+                _composeError = exception.Message;
+            }
         }
         catch (Exception exception)
         {
-            _composeError = "加载 Compose 项目失败：" + exception.Message;
+            if (version == _composeLoadVersion)
+            {
+                _composeError = "加载 Compose 项目失败：" + exception.Message;
+            }
         }
         finally
         {
-            _loading = false;
+            if (version == _composeLoadVersion)
+            {
+                _loading = false;
+            }
         }
     }
 

@@ -30,3 +30,6 @@ tmp/
 # OS
 Thumbs.db
 .DS_Store
+
+# 本地发布日志
+publish.log
