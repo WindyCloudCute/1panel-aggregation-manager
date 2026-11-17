@@ -1,0 +1,13 @@
+@using PanelFleet.Application.PanelUpdates
+
+<section class="alert alert-warn update-risk-notice">
+    <h2 class="update-risk-title">升级前请确认（严重风险操作）</h2>
+    <ul class="update-risk-list">
+        <li><strong>无自动回滚</strong>：1Panel 升级失败需人工登录节点处理，PanelFleet 不会恢复旧版本。</li>
+        <li><strong>面板会重启</strong>：升级期间该节点面板界面与 API 会中断数十秒到数分钟。</li>
+        <li><strong>请在维护窗口执行</strong>：逐节点顺序升级；任一节点失败立即停止后续节点，已升级节点不回滚。</li>
+        <li><strong>升级后自动健康检查</strong>：回读版本并重新探测 dashboard/base/os；超时未恢复会标记失败，需人工确认。</li>
+        <li><strong>磁盘要求</strong>：面板升级程序要求安装目录可用空间 ≥ 500 MiB。</li>
+    </ul>
+    <p class="muted small">真实节点默认只做版本检查；升级动作需要逐次预览并输入确认文本。</p>
+</section>

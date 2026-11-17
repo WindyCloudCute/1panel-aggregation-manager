@@ -1,0 +1,12 @@
+@* 页面外壳：为没有独立 .razor.css 的页面（Pages/* 不在本次写范围）提供统一的页面级间距与局部打磨样式。 *@
+<div class="page-shell @CssClass">
+    @ChildContent
+</div>
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter]
+    public string? CssClass { get; set; }
+}

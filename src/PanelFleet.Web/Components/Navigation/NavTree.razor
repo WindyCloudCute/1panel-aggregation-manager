@@ -1,0 +1,88 @@
+@using PanelFleet.Web.Components.Navigation
+
+@* 管理页通用左树：页面把业务数据映射成 NavTreeNode，本组件负责展开/选中/过滤/加载态渲染。 *@
+<div class="nav-tree" role="tree" aria-label="@AriaLabel">
+    @if (Header is not null)
+    {
+        <div class="nav-tree-header">@Header</div>
+    }
+
+    @if (Searchable)
+    {
+        <div class="nav-tree-search">
+            <input type="search"
+                   class="nav-tree-search-input"
+                   placeholder="@SearchPlaceholder"
+                   value="@_filter"
+                   @oninput="OnFilterInput" />
+        </div>
+    }
+
+    @if (VisibleNodes.Count == 0)
+    {
+        <p class="nav-tree-empty">@EmptyText</p>
+    }
+    else
+    {
+        @foreach (var node in VisibleNodes)
+        {
+            <NavTreeNodeView Node="node"
+                             Depth="0"
+                             SelectedId="@SelectedId"
+                             Filter="@EffectiveFilter"
+                             SelectableBranches="SelectableBranches"
+                             OnSelect="HandleSelectAsync"
+                             OnToggle="HandleToggleAsync" />
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public IReadOnlyList<NavTreeNode> Nodes { get; set; } = [];
+
+    [Parameter]
+    public string? SelectedId { get; set; }
+
+    [Parameter]
+    public EventCallback<NavTreeNode> OnSelect { get; set; }
+
+    /// <summary>分支节点首次展开时触发，页面可在此懒加载子项。</summary>
+    [Parameter]
+    public EventCallback<NavTreeNode> OnToggle { get; set; }
+
+    /// <summary>为 true 时点击分支标题也会触发 OnSelect（用于用节点行做过滤），箭头仍单独控制展开。</summary>
+    [Parameter]
+    public bool SelectableBranches { get; set; }
+
+    [Parameter]
+    public bool Searchable { get; set; } = true;
+
+    [Parameter]
+    public string SearchPlaceholder { get; set; } = "搜索节点或资源…";
+
+    [Parameter]
+    public string EmptyText { get; set; } = "暂无数据";
+
+    [Parameter]
+    public string AriaLabel { get; set; } = "节点导航";
+
+    [Parameter]
+    public RenderFragment? Header { get; set; }
+
+    private string? _filter;
+
+    private string? EffectiveFilter => string.IsNullOrWhiteSpace(_filter) ? null : _filter.Trim();
+
+    private IReadOnlyList<NavTreeNode> VisibleNodes =>
+        Nodes.Where(node => node.Matches(EffectiveFilter)).ToArray();
+
+    private void OnFilterInput(ChangeEventArgs args)
+    {
+        _filter = args.Value?.ToString();
+    }
+
+    private Task HandleSelectAsync(NavTreeNode node) => OnSelect.InvokeAsync(node);
+
+    private Task HandleToggleAsync(NavTreeNode node) => OnToggle.InvokeAsync(node);
+}

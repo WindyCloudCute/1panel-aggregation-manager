@@ -1,0 +1,2049 @@
+@page "/appstore"
+@attribute [Authorize]
+@using System.Text.Json.Nodes
+@using PanelFleet.Application.AppStore
+@using PanelFleet.Web.Components.AppStore
+@inject INodeService NodeService
+@inject AppStoreService Store
+@inject IWriteOperationService Operations
+@inject IActorProvider ActorProvider
+
+<PageTitle>应用商店</PageTitle>
+
+<div class="page-header">
+    <h1>应用商店</h1>
+    <div class="actions">
+        @if (_viewMode == "node" && _nodeId is not null)
+        {
+            <button type="button" class="btn btn-primary" @onclick="OpenInstallWizardAsync" disabled="@(_busy || EnabledNodes.Count == 0)">
+                安装应用
+            </button>
+        }
+        <button type="button" class="btn" @onclick="RefreshAsync" disabled="@(_loading || _busy)">刷新</button>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(_nodeError))
+{
+    <div class="alert alert-error">节点列表加载失败：@_nodeError</div>
+}
+
+@if (_nodesLoaded && _nodes.Count == 0)
+{
+    <div class="card">
+        <p class="muted">还没有节点，先到 <a href="/nodes/new">添加节点</a> 接入第一台 1Panel，再使用应用商店。</p>
+    </div>
+}
+else
+{
+    <AppStoreLayout>
+        <Tree>
+            <div class="tree-panel-head">
+                <strong>节点与应用</strong>
+                <span class="muted small">@EnabledNodes.Count 个启用节点</span>
+            </div>
+            <NavTree Nodes="BuildTreeNodes()"
+                     SelectedId="@_selectedTreeId"
+                     OnSelect="OnTreeSelectAsync"
+                     OnToggle="OnTreeToggleAsync"
+                     SelectableBranches="true"
+                     Searchable="true"
+                     SearchPlaceholder="搜索节点或应用…"
+                     EmptyText="还没有可用节点"
+                     AriaLabel="节点与应用导航" />
+            <p class="muted small tree-panel-tip">
+                选择节点后在右侧管理应用商店与已安装应用；「已安装应用」叶子可直接定位到该应用并打开参数与操作。
+            </p>
+        </Tree>
+
+        <ChildContent>
+            @if (_viewMode == "aggregate")
+            {
+                <div class="work-head">
+                    <div class="work-title">
+                        <h2>全部节点</h2>
+                        <span class="badge badge-unknown">只读汇总</span>
+                    </div>
+                    <div class="actions">
+                        <button type="button" class="btn" @onclick="ShowAggregateAsync" disabled="@_aggregateLoading">刷新汇总</button>
+                    </div>
+                    <span class="work-sub muted small">
+                        汇总所有启用节点的已安装应用，便于跨节点巡检；安装、升级、卸载与配置修改需要先在左侧选择具体节点。
+                    </span>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_aggregateError))
+                {
+                    <div class="alert alert-warn">@_aggregateError</div>
+                }
+
+                @if (_aggregateLoading)
+                {
+                    <div class="skeleton-stack">
+                        @for (var i = 0; i < 4; i++)
+                        {
+                            <div class="skeleton-row"></div>
+                        }
+                    </div>
+                }
+                else if (_aggregateRows.Count == 0)
+                {
+                    <div class="work-empty">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="7" height="7" rx="2"></rect>
+                            <rect x="14" y="3" width="7" height="7" rx="2"></rect>
+                            <rect x="3" y="14" width="7" height="7" rx="2"></rect>
+                            <rect x="14" y="14" width="7" height="7" rx="2"></rect>
+                        </svg>
+                        <p>所有启用节点都还没有已安装应用。</p>
+                        <p class="muted small">从左侧选择节点，在「应用商店」中搜索并安装应用。</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="work-card">
+                        <div class="table-wrap">
+                            <table class="table aggregate-table">
+                                <thead>
+                                    <tr>
+                                        <th>节点</th>
+                                        <th>应用</th>
+                                        <th>版本</th>
+                                        <th>状态</th>
+                                        <th>端口</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in _aggregateRows)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div class="aggregate-node">
+                                                    <span>@row.NodeName</span>
+                                                    @if (FindNode(row.NodeId) is { } rowNode)
+                                                    {
+                                                        <span class="badge @HealthBadgeClass(rowNode)">@HealthText(rowNode)</span>
+                                                    }
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div>@row.App.Name</div>
+                                                <div class="muted small">@(row.App.AppName ?? row.App.AppKey)</div>
+                                            </td>
+                                            <td>@row.App.Version</td>
+                                            <td>
+                                                <span class="badge @StatusClass(row.App.Status)">@StatusText(row.App.Status)</span>
+                                            </td>
+                                            <td class="muted">@(row.App.HttpPort is { } port ? port.ToString() : "-")</td>
+                                            <td>
+                                                <button type="button" class="btn" @onclick="() => OnAggregateOpenAsync(row)" disabled="@_busy">查看</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+            }
+            else if (_nodeId is null)
+            {
+                <div class="work-empty">
+                    <p>请先在左侧选择一个启用节点。</p>
+                </div>
+            }
+            else
+            {
+                <div class="work-head">
+                    <div class="work-title">
+                        @if (CurrentNode is { } node)
+                        {
+                            <span class="health-dot @HealthDotClass(node)"></span>
+                            <h2>@node.Name</h2>
+                            <span class="badge @HealthBadgeClass(node)">@HealthText(node)</span>
+                            @if (!string.IsNullOrWhiteSpace(node.PanelVersion))
+                            {
+                                <span class="badge badge-unknown">1Panel v@(node.PanelVersion)</span>
+                            }
+                            <span class="muted small">@node.BaseUrl.Host</span>
+                        }
+                        else
+                        {
+                            <h2>@(_nodeId?.Value.ToString() ?? "节点")</h2>
+                        }
+                    </div>
+                    <div class="actions">
+                        <button type="button" class="btn btn-primary" @onclick="OpenInstallWizardAsync" disabled="@_busy">安装应用</button>
+                        <button type="button" class="btn" @onclick="RefreshAsync" disabled="@(_loading || _busy)">刷新</button>
+                    </div>
+                    <span class="work-sub muted small">
+                        从该节点上下文发起安装、升级、卸载与配置修改（目标节点已锁定）；左侧树可快速定位已安装应用。
+                    </span>
+                </div>
+
+                <div class="appstore-tabs">
+                    <button type="button" class="tab @(_tab == "store" ? "active" : null)" @onclick='() => SwitchTabAsync("store")'>
+                        应用商店
+                    </button>
+                    <button type="button" class="tab @(_tab == "installed" ? "active" : null)" @onclick='() => SwitchTabAsync("installed")'>
+                        已安装应用@(_installedTotal > 0 ? $"（{_installedTotal}）" : string.Empty)
+                    </button>
+                    <button type="button" class="tab @(_tab == "upgrade" ? "active" : null)" @onclick='() => SwitchTabAsync("upgrade")'>
+                        可升级@(_upgradeRows.Count > 0 ? $"（{_upgradeRows.Count}）" : string.Empty)
+                    </button>
+                </div>
+
+                @if (_tab == "store")
+                {
+                    <div class="store-toolbar">
+                        <label class="toolbar-field">
+                            <span class="toolbar-label">搜索</span>
+                            <input class="search-input" placeholder="应用名称…" @bind="_storeName" @bind:event="oninput" @onkeydown="OnStoreSearchKeyDown" />
+                        </label>
+                        <label class="toolbar-field">
+                            <span class="toolbar-label">分类</span>
+                            <select @bind="_storeTag" @bind:after="SearchStoreAsync">
+                                <option value="">全部分类</option>
+                                @foreach (var tag in _tags)
+                                {
+                                    <option value="@tag.Key">@tag.Name</option>
+                                }
+                            </select>
+                        </label>
+                        <button type="button" class="btn btn-primary" @onclick="SearchStoreAsync" disabled="@_storeLoading">搜索</button>
+                        <span class="muted small">共 @_storeTotal 个应用 · 第 @_storePage/@StoreTotalPages 页</span>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(_storeError))
+                    {
+                        <div class="alert alert-error">@_storeError</div>
+                    }
+
+                    @if (_storeLoading)
+                    {
+                        <div class="skeleton-grid">
+                            @for (var i = 0; i < 6; i++)
+                            {
+                                <div class="skeleton-card"></div>
+                            }
+                        </div>
+                    }
+                    else if (_storeItems.Count == 0)
+                    {
+                        <div class="resource-empty">
+                            <p>没有匹配的应用，可尝试清空分类或关键词。</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="appstore-grid">
+                            @foreach (var item in _storeItems)
+                            {
+                                <AppStoreCard App="item"
+                                              Selected="_detail is not null && _detail.Key == item.Key"
+                                              OnDetail="OpenDetailAsync"
+                                              OnInstall="OpenInstallRequestedAsync" />
+                            }
+                        </div>
+                        <div class="resource-pagination">
+                            <button type="button" class="btn" @onclick="PreviousStorePageAsync" disabled="@(_storeLoading || _storePage <= 1)">上一页</button>
+                            <button type="button" class="btn" @onclick="NextStorePageAsync" disabled="@(_storeLoading || _storePage >= StoreTotalPages)">下一页</button>
+                        </div>
+                    }
+                }
+                else if (_tab == "upgrade")
+                {
+                    <div class="store-toolbar">
+                        <button type="button" class="btn" @onclick="LoadUpgradeCandidatesAsync" disabled="@(_upgradeTabLoading || _busy)">刷新可升级</button>
+                        <label class="checkbox-inline"><input type="checkbox" @bind="_upgradeBackup" /><span>升级前备份</span></label>
+                        <label class="checkbox-inline"><input type="checkbox" @bind="_upgradePullImage" /><span>拉取新镜像</span></label>
+                        <label class="checkbox-inline"><input type="checkbox" @bind="_upgradeDeleteImage" /><span>删除旧镜像</span></label>
+                        <button type="button" class="btn btn-primary" @onclick="StartBatchUpgradeAsync" disabled="@(_busy || UpgradeSelectedCount == 0)">
+                            批量升级
+                        </button>
+                        <span class="muted small">已选 @UpgradeSelectedCount 个应用 / @UpgradeSelectedNodeCount 个节点</span>
+                    </div>
+
+                    <p class="muted small">
+                        汇总所有启用节点的可升级应用（跨节点只读聚合）；勾选后可一次提交批量升级。
+                        执行时按节点顺序串行升级，任一应用失败即停止，不自动重试、不回滚。
+                    </p>
+
+                    @if (!string.IsNullOrWhiteSpace(_upgradeTabError))
+                    {
+                        <div class="alert alert-warn">@_upgradeTabError</div>
+                    }
+
+                    <AppUpgradeTable Rows="_upgradeRows"
+                                     Busy="_upgradeTabLoading"
+                                     SelectedKeys="_upgradeSelected"
+                                     OnToggle="ToggleUpgradeRow"
+                                     OnToggleAll="ToggleAllUpgradeRows"
+                                     OnUpgrade="UpgradeCandidateAsync"
+                                     OnRefresh="LoadUpgradeCandidatesAsync" />
+                }
+                else
+                {
+                    <div class="store-toolbar">
+                        <label class="toolbar-field">
+                            <span class="toolbar-label">搜索</span>
+                            <input class="search-input" placeholder="安装名称…" @bind="_installedName" @bind:event="oninput" @onkeydown="OnInstalledSearchKeyDown" />
+                        </label>
+                        <label class="checkbox-inline">
+                            <input type="checkbox" @bind="_updateOnly" @bind:after="LoadInstalledAsync" />
+                            <span>仅显示可升级</span>
+                        </label>
+                        <button type="button" class="btn btn-primary" @onclick="LoadInstalledAsync" disabled="@_installedLoading">刷新列表</button>
+                        <span class="muted small">共 @_installedTotal 个应用 · 第 @_installedPage/@InstalledTotalPages 页</span>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(_installedError))
+                    {
+                        <div class="alert alert-error">@_installedError</div>
+                    }
+
+                    @if (_installedLoading)
+                    {
+                        <div class="skeleton-stack">
+                            @for (var i = 0; i < 4; i++)
+                            {
+                                <div class="skeleton-row"></div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <InstalledAppTable Items="_installedItems"
+                                           HighlightId="_installedDetailItem?.Id"
+                                           Busy="_busy"
+                                           OnDetail="OpenInstalledDetailAsync"
+                                           OnEditParams="OpenParamsAsync"
+                                           OnUpgrade="OpenUpgradeAsync"
+                                           OnUninstall="OpenUninstallAsync" />
+                        <div class="resource-pagination">
+                            <button type="button" class="btn" @onclick="PreviousInstalledPageAsync" disabled="@(_installedLoading || _installedPage <= 1)">上一页</button>
+                            <button type="button" class="btn" @onclick="NextInstalledPageAsync" disabled="@(_installedLoading || _installedPage >= InstalledTotalPages)">下一页</button>
+                        </div>
+                    }
+                }
+
+                @if (_installPanelOpen)
+                {
+                    <div class="install-panel card">
+                        <div class="install-panel-head">
+                            <h2>安装应用</h2>
+                            <button type="button" class="btn" @onclick="CloseInstallPanel" disabled="@_busy">关闭</button>
+                        </div>
+
+                        <AppTargetNodeStep Nodes="_nodes"
+                                           SelectedNodeId="_installNodeId"
+                                           Locked="false"
+                                           Busy="_busy"
+                                           OnSelect="OpenInstallNodeSelectedAsync" />
+
+                        @if (_installNodeId is null)
+                        {
+                            <p class="muted">请先选择目标节点，然后在应用列表点击「安装」选择要安装的应用。</p>
+                        }
+                        else if (_detailLoading)
+                        {
+                            <div class="skeleton-stack">
+                                @for (var i = 0; i < 3; i++)
+                                {
+                                    <div class="skeleton-row"></div>
+                                }
+                            </div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(_detailError))
+                        {
+                            <div class="alert alert-error">@_detailError</div>
+                        }
+                        else if (_detail is not null && !string.IsNullOrWhiteSpace(_pendingAppKey))
+                        {
+                            <div class="install-app-summary">
+                                <div class="install-app-title">
+                                    <strong>@_detail.Name</strong>
+                                    <span class="muted small">@_detail.Key · @_detail.Type · 版本 @_detail.Version</span>
+                                </div>
+                                <button type="button" class="btn" @onclick="OpenDetailDrawerAsync" disabled="@_busy">查看应用详情</button>
+                            </div>
+                            <InstallAppForm Detail="_detail"
+                                            Busy="_busy"
+                                            NodeReady="_installNodeId is not null"
+                                            OnVersionChanged="ChangeVersionAsync"
+                                            OnSubmit="StartInstallAsync" />
+                        }
+                        else
+                        {
+                            <p class="muted small">
+                                已选择节点「@InstallNodeName」，请在「应用商店」列表中点击目标应用的「安装」按钮加载安装参数。
+                            </p>
+                        }
+                    </div>
+                }
+
+                @if (_installedDetail is not null || _installedDetailLoading)
+                {
+                    <div class="install-panel card">
+                        <div class="install-panel-head">
+                            <h2>应用详情</h2>
+                            <div class="actions">
+                                @if (_installedDetailItem is not null)
+                                {
+                                    <button type="button" class="btn" @onclick="OpenDetailParamsAsync" disabled="@_busy">修改配置</button>
+                                    <button type="button" class="btn" @onclick="OpenDetailUpgradeAsync" disabled="@_busy">升级</button>
+                                    <button type="button" class="btn btn-danger" @onclick="OpenDetailUninstallAsync" disabled="@_busy">卸载</button>
+                                }
+                                <button type="button" class="btn" @onclick="CloseInstalledDetail">关闭</button>
+                            </div>
+                        </div>
+                        @if (_installedDetailLoading)
+                        {
+                            <div class="skeleton-stack">
+                                @for (var i = 0; i < 3; i++)
+                                {
+                                    <div class="skeleton-row"></div>
+                                }
+                            </div>
+                        }
+                        else if (_installedDetail is { } detail)
+                        {
+                            @if (!string.IsNullOrWhiteSpace(_installedDetailError))
+                            {
+                                <div class="alert alert-error">@_installedDetailError</div>
+                            }
+                            <table class="table">
+                                <tbody>
+                                    <tr><th>名称</th><td>@detail.Name</td></tr>
+                                    <tr><th>版本</th><td>@detail.Version</td></tr>
+                                    <tr><th>状态</th><td>@StatusText(detail.Status)</td></tr>
+                                    <tr><th>端口</th><td>@(detail.HttpPort?.ToString() ?? "-")</td></tr>
+                                    <tr><th>容器</th><td>@(detail.Container ?? "-")</td></tr>
+                                    <tr><th>编排文件</th><td class="detail-cell">@(detail.ComposePath ?? "-")</td></tr>
+                                    <tr><th>应用 key</th><td>@(detail.AppKey ?? "-")</td></tr>
+                                    <tr><th>端口列表</th><td>@string.Join(", ", detail.AppPorts)</td></tr>
+                                </tbody>
+                            </table>
+                            @if (detail.Env.Count > 0)
+                            {
+                                <h3>环境变量（敏感值仅展示键名）</h3>
+                                <table class="table">
+                                    <thead><tr><th>键</th><th>值</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var pair in detail.Env)
+                                        {
+                                            <tr>
+                                                <td>@pair.Key</td>
+                                                <td>@(IsSensitiveKey(pair.Key) ? "********" : pair.Value)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            }
+                        }
+                    </div>
+                }
+            }
+        </ChildContent>
+    </AppStoreLayout>
+}
+
+@if (_detailDrawerOpen)
+{
+    <AppStoreDetailDrawer Detail="_detail"
+                          Loading="_detailLoading"
+                          Error="@_detailError"
+                          Installed="_detail?.Installed == true"
+                          NodeName="@CurrentNode?.Name"
+                          Busy="_busy"
+                          OnClose="CloseDetailDrawer"
+                          OnInstall="InstallFromDetailDrawerAsync" />
+}
+
+@if (!string.IsNullOrWhiteSpace(_operationError))
+{
+    <div class="alert alert-error">@_operationError</div>
+}
+
+@if (_execution is not null)
+{
+    <div class="operation-panel card">
+        <div class="install-panel-head">
+            <h2>执行结果</h2>
+            <button type="button" class="btn" @onclick="CloseResult">关闭</button>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_taskHint))
+        {
+            <p class="muted small">@_taskHint</p>
+        }
+        <OperationResultView Execution="_execution" />
+        @if (_activeTaskId is not null && _activeTaskNodeId is not null)
+        {
+            <AppTaskProgress NodeId="@_activeTaskNodeId" TaskId="@_activeTaskId" OnFinished="OnTaskFinishedAsync" />
+        }
+        <p class="muted small">完整执行记录可在 <a href="/audit">审计</a> 页面查看（operation.executed / operation.batch）。</p>
+    </div>
+}
+
+@if (_upgradeTarget is not null)
+{
+    <div class="modal-backdrop" @onclick="CloseUpgrade">
+        <div class="modal appstore-modal" @onclick:stopPropagation="true">
+            <h2>升级 @_upgradeTarget.Name</h2>
+            <p class="muted small">目标节点：@(_upgradeNodeName ?? NodeNameOf(_upgradeTarget)) · 已锁定。</p>
+            @if (_upgradeLoading)
+            {
+                <p class="muted">正在查询可用升级版本…</p>
+            }
+            else if (_upgradeVersions.Count == 0)
+            {
+                <div class="alert alert-warn">
+                    当前没有可用的升级版本（可能已是最新版本），请先在 1Panel 中同步应用商店后重试。
+                </div>
+            }
+            else
+            {
+                <div class="form-row">
+                    <label class="form-label">目标版本</label>
+                    <select @bind="_upgradeVersion">
+                        @foreach (var version in _upgradeVersions)
+                        {
+                            <option value="@version">@version.Version（detailId @version.DetailId）</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline"><input type="checkbox" @bind="_upgradeBackup" /><span>升级前备份</span></label>
+                </div>
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline"><input type="checkbox" @bind="_upgradePullImage" /><span>拉取新镜像</span></label>
+                </div>
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline"><input type="checkbox" @bind="_upgradeDeleteImage" /><span>升级后删除旧镜像</span></label>
+                </div>
+                <div class="alert alert-warn">升级会重建容器，可能短暂中断服务；不支持自动回滚。</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_upgradeError))
+            {
+                <div class="alert alert-error">@_upgradeError</div>
+            }
+            <div class="modal-actions">
+                <button type="button" class="btn" @onclick="CloseUpgrade" disabled="@_busy">取消</button>
+                <button type="button" class="btn btn-primary" @onclick="StartUpgradeAsync" disabled="@(_busy || _upgradeVersions.Count == 0)">
+                    预览升级
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_uninstallTarget is not null)
+{
+    <div class="modal-backdrop" @onclick="CloseUninstall">
+        <div class="modal appstore-modal" @onclick:stopPropagation="true">
+            <h2>卸载 @_uninstallTarget.Name</h2>
+            <p class="muted small">目标节点：@NodeNameOf(_uninstallTarget) · 已锁定（从节点上下文发起）。</p>
+            @if (_deleteResourcesLoading)
+            {
+                <p class="muted">正在检查关联资源…</p>
+            }
+            else if (_deleteResources.Count > 0)
+            {
+                <div class="alert alert-warn">
+                    该应用关联以下资源，卸载后将失去关联，请确认：
+                    <ul>
+                        @foreach (var resource in _deleteResources)
+                        {
+                            <li>@resource.Type：@resource.Name</li>
+                        }
+                    </ul>
+                </div>
+            }
+            else
+            {
+                <p class="muted small">未发现关联的数据库/网站等资源。</p>
+            }
+
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_uninstallForceDelete" /><span>强制卸载（容器异常时）</span></label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_uninstallDeleteBackup" /><span>同时删除备份</span></label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_uninstallDeleteImage" /><span>同时删除镜像</span></label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_uninstallDeleteDb" /><span>同时删除关联数据库（不可恢复）</span></label>
+            </div>
+            <div class="alert alert-error">卸载不可回滚；执行前需要输入节点名称确认。</div>
+            @if (!string.IsNullOrWhiteSpace(_uninstallError))
+            {
+                <div class="alert alert-error">@_uninstallError</div>
+            }
+            <div class="modal-actions">
+                <button type="button" class="btn" @onclick="CloseUninstall" disabled="@_busy">取消</button>
+                <button type="button" class="btn btn-danger" @onclick="StartUninstallAsync" disabled="@_busy">预览卸载</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_paramsTarget is not null)
+{
+    <div class="modal-backdrop" @onclick="CloseParamsEditor">
+        <div class="modal appstore-modal appstore-modal-wide" @onclick:stopPropagation="true">
+            <p class="muted small">目标节点：@NodeNameOf(_paramsTarget) · 已锁定（从节点上下文发起）。</p>
+            @if (_paramsLoading)
+            {
+                <p class="muted">正在加载应用配置…</p>
+                <div class="modal-actions">
+                    <button type="button" class="btn" @onclick="CloseParamsEditor">关闭</button>
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(_paramsError))
+            {
+                <div class="alert alert-error">@_paramsError</div>
+                <div class="modal-actions">
+                    <button type="button" class="btn" @onclick="CloseParamsEditor">关闭</button>
+                </div>
+            }
+            else
+            {
+                <InstalledParamsEditor Config="_paramsConfig"
+                                       App="_paramsTarget"
+                                       Busy="_busy"
+                                       OnSubmit="StartParamsUpdateAsync"
+                                       OnCancel="CloseParamsEditor" />
+            }
+        </div>
+    </div>
+}
+
+<OperationConfirmDialog Preview="_preview" Busy="_busy" OnConfirm="ExecuteAsync" OnCancel="CancelPreviewAsync" />
+
+@code {
+    private const int StorePageSize = 12;
+    private const int InstalledPageSize = 20;
+    private const string AllNodesId = "all";
+
+    [SupplyParameterFromQuery(Name = "nodeId")]
+    public Guid? QueryNodeId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "id")]
+    public long? QueryInstallId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "app")]
+    public string? QueryAppKey { get; set; }
+
+    [SupplyParameterFromQuery(Name = "tab")]
+    public string? QueryTab { get; set; }
+
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private bool _nodesLoaded;
+    private string? _nodeError;
+    private NodeId? _nodeId;
+    private ActorInfo? _actor;
+    private string _tab = "store";
+    private bool _loading;
+    private bool _busy;
+    private string? _operationError;
+
+    private string _viewMode = "node";
+    private string _selectedTreeId = string.Empty;
+    private Guid? _expandedNodeId;
+    private readonly Dictionary<Guid, List<InstalledAppItem>> _treeApps = [];
+    private readonly HashSet<Guid> _treeAppsLoaded = [];
+    private readonly HashSet<Guid> _treeAppsLoading = [];
+    private readonly HashSet<Guid> _treeAppsFailed = [];
+
+    private bool _aggregateLoading;
+    private string? _aggregateError;
+    private IReadOnlyList<AggregateAppRow> _aggregateRows = [];
+
+    private bool _installPanelOpen;
+    private Guid? _installNodeId;
+    private string? _pendingAppKey;
+
+    private IReadOnlyList<AppStoreTag> _tags = [];
+    private IReadOnlyList<AppStoreItem> _storeItems = [];
+    private int _storeTotal;
+    private int _storePage = 1;
+    private string? _storeName;
+    private string _storeTag = string.Empty;
+    private bool _storeLoading;
+    private string? _storeError;
+
+    private AppStoreDetail? _detail;
+    private string? _detailError;
+    private bool _detailLoading;
+    private bool _detailDrawerOpen;
+
+    private IReadOnlyList<InstalledAppItem> _installedItems = [];
+    private int _installedTotal;
+    private int _installedPage = 1;
+    private string? _installedName;
+    private bool _updateOnly;
+    private bool _installedLoading;
+    private string? _installedError;
+    private InstalledAppDetail? _installedDetail;
+    private InstalledAppItem? _installedDetailItem;
+    private string? _installedDetailError;
+    private bool _installedDetailLoading;
+
+    private OperationPreview? _preview;
+    private OperationExecution? _execution;
+    private string? _activeTaskId;
+    private NodeId? _activeTaskNodeId;
+    private string? _taskHint;
+
+    private InstalledAppItem? _upgradeTarget;
+    private Guid? _upgradeNodeId;
+    private string? _upgradeNodeName;
+    private IReadOnlyList<AppUpdateVersion> _upgradeVersions = [];
+    private AppUpdateVersion? _upgradeVersion;
+    private bool _upgradeLoading;
+    private string? _upgradeError;
+    private bool _upgradeBackup = true;
+    private bool _upgradePullImage = true;
+    private bool _upgradeDeleteImage;
+
+    private bool _upgradeTabLoading;
+    private string? _upgradeTabError;
+    private IReadOnlyList<AppUpgradeCandidate> _upgradeRows = [];
+    private readonly HashSet<string> _upgradeSelected = new(StringComparer.Ordinal);
+
+    private InstalledAppItem? _uninstallTarget;
+    private IReadOnlyList<AppInstallResource> _deleteResources = [];
+    private bool _deleteResourcesLoading;
+    private string? _uninstallError;
+    private bool _uninstallForceDelete;
+    private bool _uninstallDeleteBackup;
+    private bool _uninstallDeleteImage;
+    private bool _uninstallDeleteDb;
+
+    private InstalledAppItem? _paramsTarget;
+    private InstalledAppConfig? _paramsConfig;
+    private bool _paramsLoading;
+    private string? _paramsError;
+
+    private IReadOnlyList<NodeSummary> EnabledNodes => _nodes.Where(node => node.IsEnabled).ToArray();
+
+    private NodeSummary? CurrentNode => _nodeId is { } id
+        ? _nodes.FirstOrDefault(node => node.Id == id)
+        : null;
+
+    private string InstallNodeName => _installNodeId is { } id ? NodeNameOf(id) : "未选择";
+
+    private int StoreTotalPages => Math.Max(1, (int)Math.Ceiling(_storeTotal / (double)StorePageSize));
+
+    private int InstalledTotalPages => Math.Max(1, (int)Math.Ceiling(_installedTotal / (double)InstalledPageSize));
+
+    private int UpgradeSelectedCount =>
+        _upgradeRows.Count(row => row.CanSelect && _upgradeSelected.Contains(row.Key));
+
+    private int UpgradeSelectedNodeCount => _upgradeRows
+        .Where(row => row.CanSelect && _upgradeSelected.Contains(row.Key))
+        .Select(row => row.NodeId)
+        .Distinct()
+        .Count();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _actor = await ActorProvider.GetAsync();
+        _loading = true;
+        try
+        {
+            _nodes = await NodeService.ListAsync(default);
+            _nodesLoaded = true;
+        }
+        catch (Exception exception)
+        {
+            _nodes = [];
+            _nodesLoaded = true;
+            _nodeError = exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        var enabled = EnabledNodes;
+        Guid? target = QueryNodeId;
+        if (target is null || enabled.All(node => node.Id.Value != target.Value))
+        {
+            target = enabled.Count > 0 ? enabled[0].Id.Value : null;
+        }
+
+        if (target is null)
+        {
+            return;
+        }
+
+        SelectNode(target.Value);
+        _selectedTreeId = $"node:{target.Value:D}";
+        _expandedNodeId = target.Value;
+        await LoadStoreAreaAsync();
+
+        if (string.Equals(QueryTab, "installed", StringComparison.OrdinalIgnoreCase))
+        {
+            _tab = "installed";
+        }
+        else if (string.Equals(QueryTab, "upgrade", StringComparison.OrdinalIgnoreCase))
+        {
+            _tab = "upgrade";
+            await LoadUpgradeCandidatesAsync();
+        }
+
+        if (QueryInstallId is { } installId)
+        {
+            _viewMode = "node";
+            _tab = "installed";
+            await EnsureTreeAppsAsync(target.Value);
+            await OpenInstalledDetailByIdAsync(installId);
+        }
+        else if (!string.IsNullOrWhiteSpace(QueryAppKey))
+        {
+            await OpenDetailByKeyAsync(QueryAppKey);
+        }
+    }
+
+    private void SelectNode(Guid nodeId)
+    {
+        _nodeId = new NodeId(nodeId);
+        _detail = null;
+        _detailError = null;
+        _detailDrawerOpen = false;
+        _preview = null;
+        _execution = null;
+        _activeTaskId = null;
+        _activeTaskNodeId = null;
+        _storePage = 1;
+        _installedPage = 1;
+        _installedDetail = null;
+        _installedDetailItem = null;
+        _installedDetailError = null;
+        _upgradeSelected.Clear();
+        _operationError = null;
+    }
+
+    // —— 左侧树 ——
+    private IReadOnlyList<NavTreeNode> BuildTreeNodes()
+    {
+        var enabled = EnabledNodes;
+        var root = new NavTreeNode
+        {
+            Id = AllNodesId,
+            Label = "全部节点",
+            Hint = $"{enabled.Count} 个启用节点 · 只读汇总",
+            BadgeText = "汇总",
+            BadgeClass = "badge-unknown",
+            DefaultExpanded = true,
+            Children = enabled.Select(BuildNodeBranch).ToArray()
+        };
+        return [root];
+    }
+
+    private NavTreeNode BuildNodeBranch(NodeSummary node)
+    {
+        var nodeId = node.Id.Value;
+        var children = new List<NavTreeNode>();
+        if (_treeAppsLoaded.Contains(nodeId) && _treeApps.TryGetValue(nodeId, out var apps))
+        {
+            children.AddRange(apps.Select(app => new NavTreeNode
+            {
+                Id = $"app:{nodeId:D}:{app.Id}",
+                Kind = NavTreeNodeKind.Leaf,
+                Label = app.Name,
+                Hint = $"{app.Version} · {StatusText(app.Status)}",
+                BadgeText = app.CanUpdate ? "可升级" : null,
+                BadgeClass = "badge-warn"
+            }));
+        }
+
+        var failed = _treeAppsFailed.Contains(nodeId);
+        return new NavTreeNode
+        {
+            Id = $"node:{nodeId:D}",
+            Label = node.Name,
+            Hint = NodeHint(node),
+            BadgeText = HealthText(node),
+            BadgeClass = HealthBadgeClass(node),
+            IsDisabled = !node.IsEnabled,
+            IsLoading = _treeAppsLoading.Contains(nodeId),
+            ChildrenLoaded = _treeAppsLoaded.Contains(nodeId),
+            Error = failed ? "已安装应用加载失败，收起后重新展开可重试" : null,
+            DefaultExpanded = _expandedNodeId == nodeId,
+            Children = children
+        };
+    }
+
+    private async Task OnTreeSelectAsync(NavTreeNode node)
+    {
+        if (node.Id == AllNodesId)
+        {
+            _viewMode = "aggregate";
+            _selectedTreeId = AllNodesId;
+            _tab = "store";
+            _preview = null;
+            _installedDetail = null;
+            _installedDetailItem = null;
+            _installPanelOpen = false;
+            _operationError = null;
+            await ShowAggregateAsync();
+            return;
+        }
+
+        if (node.Id.StartsWith("node:", StringComparison.Ordinal))
+        {
+            if (!Guid.TryParse(node.Id[5..], out var nodeId))
+            {
+                return;
+            }
+
+            await SelectNodeContextAsync(nodeId);
+            return;
+        }
+
+        if (node.Id.StartsWith("app:", StringComparison.Ordinal))
+        {
+            var parts = node.Id.Split(':');
+            if (parts.Length == 3 && Guid.TryParse(parts[1], out var nodeId) && long.TryParse(parts[2], out var installId))
+            {
+                await SelectInstalledAppAsync(nodeId, installId);
+            }
+        }
+    }
+
+    private async Task OnTreeToggleAsync(NavTreeNode node)
+    {
+        if (node.Id.StartsWith("node:", StringComparison.Ordinal)
+            && Guid.TryParse(node.Id[5..], out var nodeId))
+        {
+            await EnsureTreeAppsAsync(nodeId);
+        }
+    }
+
+    private async Task SelectNodeContextAsync(Guid nodeId)
+    {
+        _viewMode = "node";
+        _selectedTreeId = $"node:{nodeId:D}";
+        _expandedNodeId = nodeId;
+        if (_nodeId?.Value != nodeId)
+        {
+            SelectNode(nodeId);
+            await LoadStoreAreaAsync();
+        }
+
+        await EnsureTreeAppsAsync(nodeId);
+    }
+
+    private async Task SelectInstalledAppAsync(Guid nodeId, long installId)
+    {
+        _viewMode = "node";
+        _tab = "installed";
+        _selectedTreeId = $"app:{nodeId:D}:{installId}";
+        _expandedNodeId = nodeId;
+        if (_nodeId?.Value != nodeId)
+        {
+            SelectNode(nodeId);
+            await LoadStoreAreaAsync();
+        }
+
+        await EnsureTreeAppsAsync(nodeId);
+        await OpenInstalledDetailByIdAsync(installId);
+    }
+
+    private async Task EnsureTreeAppsAsync(Guid nodeId)
+    {
+        if (_treeAppsLoaded.Contains(nodeId) || _treeAppsLoading.Contains(nodeId))
+        {
+            return;
+        }
+
+        _treeAppsLoading.Add(nodeId);
+        _treeAppsFailed.Remove(nodeId);
+        try
+        {
+            var page = await Store.SearchInstalledAsync(new NodeId(nodeId), null, null, false, false, 1, 100, default);
+            _treeApps[nodeId] = page.Items.ToList();
+            _treeAppsLoaded.Add(nodeId);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception)
+        {
+            _treeApps.Remove(nodeId);
+            _treeAppsLoaded.Remove(nodeId);
+            _treeAppsFailed.Add(nodeId);
+        }
+        finally
+        {
+            _treeAppsLoading.Remove(nodeId);
+        }
+    }
+
+    private async Task OnAggregateOpenAsync(AggregateAppRow row) =>
+        await SelectInstalledAppAsync(row.NodeId, row.App.Id);
+
+    private async Task ShowAggregateAsync()
+    {
+        _aggregateLoading = true;
+        _aggregateError = null;
+        var rows = new List<AggregateAppRow>();
+        try
+        {
+            foreach (var node in EnabledNodes)
+            {
+                try
+                {
+                    var page = await Store.SearchInstalledAsync(node.Id, null, null, false, false, 1, 200, default);
+                    rows.AddRange(page.Items.Select(app => new AggregateAppRow(node.Id.Value, node.Name, app)));
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception)
+                {
+                    _aggregateError = "部分节点的已安装应用加载失败，汇总结果可能不完整。";
+                }
+            }
+
+            _aggregateRows = rows;
+        }
+        finally
+        {
+            _aggregateLoading = false;
+        }
+    }
+
+    // —— 节点数据加载 ——
+    private async Task LoadStoreAreaAsync()
+    {
+        await LoadTagsAsync();
+        await SearchStoreAsync();
+        await LoadInstalledAsync();
+    }
+
+    private async Task LoadTagsAsync()
+    {
+        if (_nodeId is not { } nodeId)
+        {
+            return;
+        }
+
+        try
+        {
+            _tags = await Store.GetTagsAsync(nodeId, default);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception)
+        {
+            _tags = [];
+        }
+    }
+
+    private async Task SearchStoreAsync()
+    {
+        if (_nodeId is not { } nodeId)
+        {
+            return;
+        }
+
+        _storeLoading = true;
+        _storeError = null;
+        try
+        {
+            var tags = string.IsNullOrWhiteSpace(_storeTag) ? null : new[] { _storeTag };
+            var page = await Store.SearchAsync(
+                nodeId,
+                new AppStoreQuery(_storeName, tags, null, null, false, _storePage, StorePageSize),
+                default);
+            _storeItems = page.Items;
+            _storeTotal = page.Total;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _storeItems = [];
+            _storeTotal = 0;
+            _storeError = "加载应用商店失败：" + exception.Message;
+        }
+        finally
+        {
+            _storeLoading = false;
+        }
+    }
+
+    private async Task OnStoreSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            _storePage = 1;
+            await SearchStoreAsync();
+        }
+    }
+
+    private async Task PreviousStorePageAsync()
+    {
+        if (_storePage <= 1)
+        {
+            return;
+        }
+
+        _storePage--;
+        await SearchStoreAsync();
+    }
+
+    private async Task NextStorePageAsync()
+    {
+        if (_storePage >= StoreTotalPages)
+        {
+            return;
+        }
+
+        _storePage++;
+        await SearchStoreAsync();
+    }
+
+    private async Task LoadInstalledAsync()
+    {
+        if (_nodeId is not { } nodeId)
+        {
+            return;
+        }
+
+        _installedLoading = true;
+        _installedError = null;
+        try
+        {
+            var page = await Store.SearchInstalledAsync(
+                nodeId,
+                _installedName,
+                null,
+                _updateOnly,
+                _updateOnly,
+                _installedPage,
+                InstalledPageSize,
+                default);
+            _installedItems = page.Items;
+            _installedTotal = page.Total;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _installedItems = [];
+            _installedTotal = 0;
+            _installedError = "加载已安装应用失败：" + exception.Message;
+        }
+        finally
+        {
+            _installedLoading = false;
+        }
+    }
+
+    private async Task OnInstalledSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            _installedPage = 1;
+            await LoadInstalledAsync();
+        }
+    }
+
+    private async Task PreviousInstalledPageAsync()
+    {
+        if (_installedPage <= 1)
+        {
+            return;
+        }
+
+        _installedPage--;
+        await LoadInstalledAsync();
+    }
+
+    private async Task NextInstalledPageAsync()
+    {
+        if (_installedPage >= InstalledTotalPages)
+        {
+            return;
+        }
+
+        _installedPage++;
+        await LoadInstalledAsync();
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        _tab = tab;
+        if (tab == "installed")
+        {
+            await LoadInstalledAsync();
+        }
+        else if (tab == "upgrade")
+        {
+            await LoadUpgradeCandidatesAsync();
+        }
+        else
+        {
+            await SearchStoreAsync();
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        _operationError = null;
+        if (_viewMode == "aggregate")
+        {
+            await ShowAggregateAsync();
+            return;
+        }
+
+        if (_nodeId is not { } nodeId)
+        {
+            return;
+        }
+
+        _treeApps.Remove(nodeId.Value);
+        _treeAppsLoaded.Remove(nodeId.Value);
+        _treeAppsFailed.Remove(nodeId.Value);
+        await LoadStoreAreaAsync();
+        await EnsureTreeAppsAsync(nodeId.Value);
+    }
+
+    private async Task OpenInstallWizardAsync()
+    {
+        _installNodeId = _nodeId?.Value;
+        _pendingAppKey = null;
+        _detail = null;
+        _detailError = null;
+        _installPanelOpen = true;
+        _tab = "store";
+        await Task.CompletedTask;
+    }
+
+    private async Task OpenInstallNodeSelectedAsync(Guid nodeId)
+    {
+        _installNodeId = nodeId;
+        await SelectNodeContextAsync(nodeId);
+        if (!string.IsNullOrWhiteSpace(_pendingAppKey))
+        {
+            await LoadDetailAsync(_pendingAppKey, null);
+        }
+    }
+
+    private async Task OpenInstallPanelForAppAsync(string appKey, bool wizard)
+    {
+        _installPanelOpen = true;
+        _pendingAppKey = appKey;
+        _installNodeId ??= _nodeId?.Value;
+
+        if (_installNodeId is not null)
+        {
+            await LoadDetailAsync(appKey, null);
+        }
+        else
+        {
+            _detail = null;
+            _detailError = null;
+        }
+    }
+
+    private void CloseInstallPanel()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _installPanelOpen = false;
+        _installNodeId = null;
+        _pendingAppKey = null;
+        _detail = null;
+        _detailError = null;
+    }
+
+    private async Task OpenDetailAsync(AppStoreItem item)
+    {
+        _detailDrawerOpen = true;
+        await LoadDetailAsync(item.Key, null);
+    }
+
+    private async Task OpenDetailByKeyAsync(string appKey)
+    {
+        _detailDrawerOpen = true;
+        await LoadDetailAsync(appKey, null);
+    }
+
+    private Task OpenDetailDrawerAsync() =>
+        string.IsNullOrWhiteSpace(_pendingAppKey) ? Task.CompletedTask : OpenDetailByKeyAsync(_pendingAppKey);
+
+    private void CloseDetailDrawer() => _detailDrawerOpen = false;
+
+    private async Task InstallFromDetailDrawerAsync()
+    {
+        if (_detail is null)
+        {
+            return;
+        }
+
+        _detailDrawerOpen = false;
+        await OpenInstallPanelForAppAsync(_detail.Key, wizard: true);
+    }
+
+    private async Task OpenInstallRequestedAsync(AppStoreItem item)
+    {
+        _detailDrawerOpen = false;
+        await OpenInstallPanelForAppAsync(item.Key, wizard: true);
+    }
+
+    private async Task LoadDetailAsync(string appKey, string? version)
+    {
+        if (_nodeId is not { } nodeId)
+        {
+            return;
+        }
+
+        _detailLoading = true;
+        _detailError = null;
+        _detail = null;
+        try
+        {
+            _detail = await Store.GetDetailAsync(nodeId, appKey, version, default);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _detailError = "加载应用详情失败：" + exception.Message;
+        }
+        finally
+        {
+            _detailLoading = false;
+        }
+    }
+
+    private async Task ChangeVersionAsync(string version)
+    {
+        if (_detail is null)
+        {
+            return;
+        }
+
+        await LoadDetailAsync(_detail.Key, version);
+    }
+
+    private async Task StartInstallAsync(AppInstallFormResult form)
+    {
+        if (_installNodeId is { } targetNode && _nodeId?.Value != targetNode)
+        {
+            SelectNode(targetNode);
+        }
+
+        if (_nodeId is null)
+        {
+            _operationError = "请先选择目标节点。";
+            return;
+        }
+
+        var parameters = new JsonObject
+        {
+            ["appDetailId"] = form.AppDetailId,
+            ["name"] = form.Name,
+            ["appKey"] = form.AppKey,
+            ["appName"] = form.AppName,
+            ["version"] = form.Version,
+            ["params"] = form.Parameters,
+            ["cpuQuota"] = form.CpuQuota,
+            ["memoryLimit"] = form.MemoryLimit,
+            ["memoryUnit"] = form.MemoryUnit,
+            ["allowPort"] = form.AllowPort,
+            ["pullImage"] = form.PullImage,
+            ["editCompose"] = form.EditCompose,
+            ["restartPolicy"] = form.RestartPolicy
+        };
+
+        AddIfNotNull(parameters, "containerName", form.ContainerName);
+        AddIfNotNull(parameters, "specifyIP", form.SpecifyIp);
+        AddIfNotNull(parameters, "dockerCompose", form.DockerCompose);
+
+        await PreviewAsync("app.install", parameters);
+    }
+
+    private Task OpenDetailParamsAsync() =>
+        _installedDetailItem is { } app ? OpenParamsAsync(app) : Task.CompletedTask;
+
+    private Task OpenDetailUpgradeAsync() =>
+        _installedDetailItem is { } app ? OpenUpgradeAsync(app) : Task.CompletedTask;
+
+    private Task OpenDetailUninstallAsync() =>
+        _installedDetailItem is { } app ? OpenUninstallAsync(app) : Task.CompletedTask;
+
+    private async Task OpenInstalledDetailAsync(InstalledAppItem app)
+    {
+        if (_nodeId is not { } nodeId)
+        {
+            return;
+        }
+
+        _installedDetailItem = app;
+        _installedDetail = null;
+        _installedDetailError = null;
+        _installedDetailLoading = true;
+        try
+        {
+            _installedDetail = await Store.GetInstalledAsync(nodeId, app.Id, default);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _installedDetailError = exception.Message;
+        }
+        finally
+        {
+            _installedDetailLoading = false;
+        }
+    }
+
+    private async Task OpenInstalledDetailByIdAsync(long installId)
+    {
+        var app = _installedItems.FirstOrDefault(item => item.Id == installId);
+        if (app is null && _nodeId is { } nodeId)
+        {
+            app = _treeApps.TryGetValue(nodeId.Value, out var apps)
+                ? apps.FirstOrDefault(item => item.Id == installId)
+                : null;
+        }
+
+        if (app is not null)
+        {
+            await OpenInstalledDetailAsync(app);
+            return;
+        }
+
+        if (_nodeId is not { } fallbackNode)
+        {
+            return;
+        }
+
+        _installedDetailItem = null;
+        _installedDetail = null;
+        _installedDetailError = null;
+        _installedDetailLoading = true;
+        try
+        {
+            var detail = await Store.GetInstalledAsync(fallbackNode, installId, default);
+            _installedDetail = detail;
+            _installedDetailItem = ToInstalledItem(detail);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _installedDetailError = exception.Message;
+        }
+        finally
+        {
+            _installedDetailLoading = false;
+        }
+    }
+
+    private void CloseInstalledDetail()
+    {
+        _installedDetail = null;
+        _installedDetailItem = null;
+        _installedDetailError = null;
+    }
+
+    private Task OpenUpgradeAsync(InstalledAppItem app) =>
+        OpenUpgradeForAsync(_nodeId?.Value, CurrentNode?.Name, app, knownLatest: null);
+
+    private Task UpgradeCandidateAsync(AppUpgradeCandidate row) =>
+        OpenUpgradeForAsync(row.NodeId, row.NodeName, row.App, row.Latest);
+
+    private async Task OpenUpgradeForAsync(Guid? nodeId, string? nodeName, InstalledAppItem app, AppUpdateVersion? knownLatest)
+    {
+        if (nodeId is null)
+        {
+            return;
+        }
+
+        _upgradeNodeId = nodeId;
+        _upgradeNodeName = nodeName ?? NodeNameOf(nodeId.Value);
+        _upgradeTarget = app;
+        _upgradeVersions = [];
+        _upgradeVersion = null;
+        _upgradeError = null;
+        _upgradeBackup = true;
+        _upgradePullImage = true;
+        _upgradeDeleteImage = false;
+
+        if (knownLatest is not null)
+        {
+            _upgradeVersions = [knownLatest];
+            _upgradeVersion = knownLatest;
+            return;
+        }
+
+        _upgradeLoading = true;
+        try
+        {
+            _upgradeVersions = await Store.GetUpdateVersionsAsync(new NodeId(nodeId.Value), app.Id, default);
+            _upgradeVersion = _upgradeVersions.LastOrDefault();
+            if (_upgradeVersions.Count == 0)
+            {
+                _upgradeError = "当前没有可用的升级版本。";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _upgradeError = "查询升级版本失败：" + exception.Message;
+        }
+        finally
+        {
+            _upgradeLoading = false;
+        }
+    }
+
+    /// <summary>聚合所有启用节点的可升级应用（每个节点只取第一页，最多 100 个）。</summary>
+    private async Task LoadUpgradeCandidatesAsync()
+    {
+        _upgradeTabLoading = true;
+        _upgradeTabError = null;
+        var rows = new List<AppUpgradeCandidate>();
+        var nodeErrors = new List<string>();
+        try
+        {
+            foreach (var node in EnabledNodes)
+            {
+                try
+                {
+                    var page = await Store.SearchInstalledAsync(node.Id, null, null, false, true, 1, 100, default);
+                    foreach (var app in page.Items.Where(item => item.CanUpdate))
+                    {
+                        try
+                        {
+                            var versions = await Store.GetUpdateVersionsAsync(node.Id, app.Id, default);
+                            rows.Add(new AppUpgradeCandidate(node.Id.Value, node.Name, app, versions.LastOrDefault(), null));
+                        }
+                        catch (Exception exception)
+                        {
+                            rows.Add(new AppUpgradeCandidate(node.Id.Value, node.Name, app, null, exception.Message));
+                        }
+                    }
+                }
+                catch (Exception exception)
+                {
+                    nodeErrors.Add($"{node.Name}：{exception.Message}");
+                }
+            }
+        }
+        finally
+        {
+            _upgradeRows = rows;
+            _upgradeSelected.RemoveWhere(key => rows.All(row => row.Key != key || !row.CanSelect));
+            _upgradeTabLoading = false;
+        }
+
+        _upgradeTabError = nodeErrors.Count == 0
+            ? null
+            : "部分节点读取升级信息失败：" + string.Join("；", nodeErrors);
+    }
+
+    private void ToggleUpgradeRow(AppUpgradeCandidate row)
+    {
+        if (!row.CanSelect)
+        {
+            return;
+        }
+
+        if (!_upgradeSelected.Remove(row.Key))
+        {
+            _upgradeSelected.Add(row.Key);
+        }
+    }
+
+    private void ToggleAllUpgradeRows(bool select)
+    {
+        if (!select)
+        {
+            _upgradeSelected.Clear();
+            return;
+        }
+
+        foreach (var row in _upgradeRows.Where(row => row.CanSelect))
+        {
+            _upgradeSelected.Add(row.Key);
+        }
+    }
+
+    private async Task StartBatchUpgradeAsync()
+    {
+        var rows = _upgradeRows
+            .Where(row => row.CanSelect && _upgradeSelected.Contains(row.Key))
+            .ToArray();
+        if (rows.Length == 0)
+        {
+            _operationError = "请先勾选要升级的应用。";
+            return;
+        }
+
+        var nodeIds = EnabledNodes
+            .Where(node => rows.Any(row => row.NodeId == node.Id.Value))
+            .Select(node => node.Id.Value)
+            .ToArray();
+
+        var targets = new JsonArray();
+        foreach (var row in rows)
+        {
+            targets.Add(new JsonObject
+            {
+                ["nodeId"] = row.NodeId.ToString("D"),
+                ["installId"] = row.App.Id,
+                ["name"] = row.App.Name,
+                ["version"] = row.Latest!.Version,
+                ["detailId"] = row.Latest.DetailId
+            });
+        }
+
+        var parameters = new JsonObject
+        {
+            ["backup"] = _upgradeBackup,
+            ["pullImage"] = _upgradePullImage,
+            ["deleteImage"] = _upgradeDeleteImage,
+            ["targets"] = targets
+        };
+
+        await PreviewAsync("app.batch_upgrade", parameters, nodeIds);
+    }
+
+    private void CloseUpgrade()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _upgradeTarget = null;
+        _upgradeNodeId = null;
+        _upgradeNodeName = null;
+        _upgradeError = null;
+    }
+
+    private async Task StartUpgradeAsync()
+    {
+        if (_upgradeTarget is not { } target || _upgradeVersion is not { } version)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject
+        {
+            ["installId"] = target.Id,
+            ["name"] = target.Name,
+            ["detailId"] = version.DetailId,
+            ["version"] = version.Version,
+            ["backup"] = _upgradeBackup,
+            ["pullImage"] = _upgradePullImage,
+            ["deleteImage"] = _upgradeDeleteImage
+        };
+
+        await PreviewAsync("app.update", parameters, _upgradeNodeId is { } upgradeNodeId ? new[] { upgradeNodeId } : null);
+        if (_preview is not null)
+        {
+            _upgradeTarget = null;
+        }
+    }
+
+    private async Task OpenUninstallAsync(InstalledAppItem app)
+    {
+        if (_nodeId is not { } nodeId)
+        {
+            return;
+        }
+
+        _uninstallTarget = app;
+        _uninstallError = null;
+        _deleteResources = [];
+        _uninstallForceDelete = false;
+        _uninstallDeleteBackup = false;
+        _uninstallDeleteImage = false;
+        _uninstallDeleteDb = false;
+        _deleteResourcesLoading = true;
+        try
+        {
+            _deleteResources = await Store.GetDeleteCheckAsync(nodeId, app.Id, default);
+            if (_deleteResources.Count > 0)
+            {
+                _uninstallError = "该应用存在关联资源，见上方提示。";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _uninstallError = "检查关联资源失败：" + exception.Message;
+        }
+        finally
+        {
+            _deleteResourcesLoading = false;
+        }
+    }
+
+    private void CloseUninstall()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _uninstallTarget = null;
+        _uninstallError = null;
+    }
+
+    private async Task StartUninstallAsync()
+    {
+        if (_uninstallTarget is not { } target)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject
+        {
+            ["installId"] = target.Id,
+            ["name"] = target.Name,
+            ["forceDelete"] = _uninstallForceDelete,
+            ["deleteBackup"] = _uninstallDeleteBackup,
+            ["deleteImage"] = _uninstallDeleteImage,
+            ["deleteDB"] = _uninstallDeleteDb
+        };
+
+        await PreviewAsync("app.uninstall", parameters);
+        if (_preview is not null)
+        {
+            _uninstallTarget = null;
+        }
+    }
+
+    private async Task OpenParamsAsync(InstalledAppItem app)
+    {
+        if (_nodeId is not { } nodeId)
+        {
+            return;
+        }
+
+        _paramsTarget = app;
+        _paramsConfig = null;
+        _paramsError = null;
+        _paramsLoading = true;
+        try
+        {
+            _paramsConfig = await Store.GetInstalledParamsAsync(nodeId, app.Id, default);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _paramsError = "加载应用配置失败：" + exception.Message;
+        }
+        finally
+        {
+            _paramsLoading = false;
+        }
+    }
+
+    private void CloseParamsEditor()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _paramsTarget = null;
+        _paramsConfig = null;
+        _paramsError = null;
+    }
+
+    private async Task StartParamsUpdateAsync(AppParamsEditResult form)
+    {
+        var parameters = new JsonObject
+        {
+            ["installId"] = form.InstallId,
+            ["name"] = form.Name,
+            ["params"] = form.Parameters,
+            ["advanced"] = form.Advanced
+        };
+
+        if (form.Advanced)
+        {
+            parameters["cpuQuota"] = form.CpuQuota ?? 0;
+            parameters["memoryLimit"] = form.MemoryLimit ?? 0;
+            parameters["memoryUnit"] = form.MemoryUnit ?? "M";
+            parameters["allowPort"] = form.AllowPort ?? false;
+            parameters["restartPolicy"] = form.RestartPolicy ?? "always";
+            AddIfNotNull(parameters, "containerName", form.ContainerName);
+            AddIfNotNull(parameters, "specifyIP", form.SpecifyIp);
+        }
+
+        await PreviewAsync("app.params_update", parameters);
+        if (_preview is not null)
+        {
+            _paramsTarget = null;
+            _paramsConfig = null;
+        }
+    }
+
+    private async Task PreviewAsync(string kind, JsonObject parameters, IReadOnlyList<Guid>? nodeIdsOverride = null)
+    {
+        IReadOnlyList<NodeId> nodeIds = nodeIdsOverride is { Count: > 0 }
+            ? nodeIdsOverride.Select(id => new NodeId(id)).ToArray()
+            : _nodeId is { } currentNodeId
+                ? [currentNodeId]
+                : [];
+        if (nodeIds.Count == 0)
+        {
+            return;
+        }
+
+        _busy = true;
+        _operationError = null;
+        _execution = null;
+        _preview = null;
+        _taskHint = null;
+        try
+        {
+            _preview = await Operations.PreviewAsync(
+                new OperationInvocation(kind, nodeIds, parameters),
+                _actor ?? ActorInfo.System,
+                default);
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationNotSupportedException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "预览失败：" + exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ExecuteAsync(string? typedConfirmation)
+    {
+        if (_preview is not { } preview)
+        {
+            return;
+        }
+
+        _busy = true;
+        _operationError = null;
+        try
+        {
+            _execution = await Operations.ExecuteAsync(
+                preview.TokenId,
+                typedConfirmation,
+                _actor ?? ActorInfo.System,
+                default);
+            _preview = null;
+
+            var successStep = _execution.Steps.FirstOrDefault(step => step.Success);
+            _activeTaskId = successStep?.TaskId;
+            _activeTaskNodeId = successStep?.NodeId;
+            _taskHint = _activeTaskId is null
+                ? "操作已提交；如为异步任务，请在已安装列表中刷新状态。"
+                : "已提交 1Panel 异步任务，页面将自动轮询任务状态。";
+
+            await LoadInstalledAsync();
+            if (_nodeId is { } nodeId)
+            {
+                _treeAppsLoaded.Remove(nodeId.Value);
+                await EnsureTreeAppsAsync(nodeId.Value);
+            }
+
+            if (_tab == "store")
+            {
+                await SearchStoreAsync();
+            }
+            else if (_tab == "upgrade")
+            {
+                await LoadUpgradeCandidatesAsync();
+            }
+        }
+        catch (OperationConfirmationException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "执行失败：" + exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CancelPreviewAsync() => _preview = null;
+
+    private void CloseResult()
+    {
+        _execution = null;
+        _activeTaskId = null;
+        _activeTaskNodeId = null;
+        _taskHint = null;
+    }
+
+    private async Task OnTaskFinishedAsync()
+    {
+        await LoadInstalledAsync();
+        if (_nodeId is { } nodeId)
+        {
+            _treeAppsLoaded.Remove(nodeId.Value);
+            await EnsureTreeAppsAsync(nodeId.Value);
+        }
+    }
+
+    private static void AddIfNotNull(JsonObject target, string key, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            target[key] = value;
+        }
+    }
+
+    private static bool IsSensitiveKey(string key) =>
+        key.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase)
+        || key.Contains("SECRET", StringComparison.OrdinalIgnoreCase)
+        || key.Contains("TOKEN", StringComparison.OrdinalIgnoreCase);
+
+    private NodeSummary? FindNode(Guid nodeId) => _nodes.FirstOrDefault(node => node.Id.Value == nodeId);
+
+    private string NodeNameOf(InstalledAppItem app) =>
+        _nodeId is { } nodeId ? NodeNameOf(nodeId) : "-";
+
+    private string NodeNameOf(NodeId nodeId) => NodeNameOf(nodeId.Value);
+
+    private string NodeNameOf(Guid nodeId) =>
+        FindNode(nodeId)?.Name ?? nodeId.ToString("N");
+
+    private static string NodeHint(NodeSummary node)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(node.PanelVersion))
+        {
+            parts.Add("v" + node.PanelVersion);
+        }
+
+        if (node.BaseUrl is { } url)
+        {
+            parts.Add(url.Host);
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string HealthDotClass(NodeSummary node) => node.Health switch
+    {
+        NodeHealth.Online => "health-online",
+        NodeHealth.Degraded => "health-degraded",
+        NodeHealth.Offline => "health-offline",
+        _ => "health-unknown"
+    };
+
+    private static string HealthBadgeClass(NodeSummary node) => node.Health switch
+    {
+        NodeHealth.Online => "badge-ok",
+        NodeHealth.Degraded => "badge-warn",
+        NodeHealth.Offline => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private static string HealthText(NodeSummary node) => node.Health switch
+    {
+        NodeHealth.Online => "在线",
+        NodeHealth.Degraded => "降级",
+        NodeHealth.Offline => "离线",
+        _ => "健康未知"
+    };
+
+    private static string StatusClass(string? status) => status switch
+    {
+        "Running" => "badge-ok",
+        "Stopped" => "badge-unknown",
+        "Installing" or "Upgrading" or "Rebuilding" or "Uninstalling" or "Downloading" => "badge-warn",
+        "Error" or "InstallErr" or "DownloadErr" or "UpgradeErr" => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private static string StatusText(string? status) => status switch
+    {
+        "Running" => "运行中",
+        "Stopped" => "已停止",
+        "Installing" => "安装中",
+        "Upgrading" => "升级中",
+        "Rebuilding" => "重建中",
+        "Uninstalling" => "卸载中",
+        "Downloading" => "下载中",
+        "Error" or "InstallErr" or "DownloadErr" or "UpgradeErr" => "异常",
+        null or "" => "未知",
+        _ => status
+    };
+
+    private static InstalledAppItem ToInstalledItem(InstalledAppDetail detail) => new(
+        detail.Id,
+        detail.Name,
+        detail.AppKey ?? string.Empty,
+        null,
+        null,
+        detail.Version,
+        detail.Status,
+        detail.Message,
+        detail.HttpPort,
+        null,
+        null,
+        detail.Container,
+        null,
+        null,
+        false,
+        false,
+        false,
+        false,
+        null,
+        detail.Env);
+
+    private sealed record AggregateAppRow(Guid NodeId, string NodeName, InstalledAppItem App);
+}

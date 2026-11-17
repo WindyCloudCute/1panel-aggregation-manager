@@ -1,0 +1,151 @@
+@using PanelFleet.Application.Models
+@using PanelFleet.Domain.Model
+
+@* 新建网站的引导：本工具不代理建站写操作，只负责把用户带到对应节点的 1Panel 网站页。 *@
+<div class="modal-backdrop" role="presentation">
+    <div class="modal-card guide-dialog" role="dialog" aria-modal="true" aria-labelledby="website-guide-title">
+        <div class="guide-header">
+            <div class="guide-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M3 12h18M12 3c2.4 2.6 3.6 5.6 3.6 9s-1.2 6.4-3.6 9c-2.4-2.6-3.6-5.6-3.6-9S9.6 5.6 12 3z" />
+                </svg>
+            </div>
+            <div>
+                <h2 id="website-guide-title">去 1Panel 建站</h2>
+                <p class="muted small">网站创建需在 1Panel 面板完成，本工具当前不代理建站写操作。</p>
+            </div>
+        </div>
+
+        <div class="guide-body">
+            <div class="guide-step">
+                <span class="guide-step-index">1</span>
+                <div class="guide-step-body">
+                    <span class="guide-step-title">选择目标节点</span>
+                    @if (LockedNodeId is Guid)
+                    {
+                        <p class="guide-locked">
+                            @LockedNodeName
+                            <span class="guide-locked-tag">从节点上下文发起，已锁定</span>
+                        </p>
+                    }
+                    else
+                    {
+                        <select class="guide-select"
+                                aria-label="选择目标节点"
+                                value="@_selectedValue"
+                                @onchange="OnNodeChanged">
+                            <option value="">请选择节点…</option>
+                            @foreach (var node in Nodes)
+                            {
+                                <option value="@node.Id.Value" disabled="@(!node.IsEnabled)">@node.Name@(node.IsEnabled ? string.Empty : "（已禁用）")</option>
+                            }
+                        </select>
+                        @if (Nodes.Count == 0)
+                        {
+                            <p class="muted small">暂无节点，请先到「节点管理」添加并启用节点。</p>
+                        }
+                    }
+                </div>
+            </div>
+
+            <div class="guide-step">
+                <span class="guide-step-index">2</span>
+                <div class="guide-step-body">
+                    <span class="guide-step-title">在 1Panel 面板中创建网站</span>
+                    @if (SelectedNode is null)
+                    {
+                        <p class="muted small">选择节点后，这里会显示将要打开的 1Panel 网站页地址。</p>
+                    }
+                    else
+                    {
+                        <code class="guide-url">@PanelUrl</code>
+                        <p class="muted small">将打开该节点 1Panel 的「网站」页面，创建完成后回到本页刷新即可看到新网站。</p>
+                    }
+                </div>
+            </div>
+
+            <div class="guide-note">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 8h.01M11 12h1v4h1" />
+                </svg>
+                <span>本页仍可对已有网站执行启停、域名、代理、SSL 与 PHP 版本等受控操作，这些操作会进入审计。</span>
+            </div>
+        </div>
+
+        <div class="guide-footer">
+            <button type="button" class="btn" @onclick="CloseAsync">取消</button>
+            @if (SelectedNode is null)
+            {
+                <button type="button" class="btn btn-primary" disabled>在 1Panel 中打开该节点网站页</button>
+            }
+            else
+            {
+                <a class="btn btn-primary" href="@PanelUrl" target="_blank" rel="noopener noreferrer" @onclick="CloseAsync">
+                    在 1Panel 中打开该节点网站页
+                </a>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public IReadOnlyList<NodeSummary> Nodes { get; set; } = [];
+
+    /// <summary>从节点上下文发起时预填并锁定节点。</summary>
+    [Parameter]
+    public Guid? LockedNodeId { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private string _selectedValue = string.Empty;
+    private bool _initialized;
+
+    private NodeSummary? SelectedNode => FindNode(_selectedValue);
+
+    private string LockedNodeName => LockedNodeId is Guid locked
+        ? Nodes.FirstOrDefault(node => node.Id.Value == locked)?.Name ?? locked.ToString()
+        : string.Empty;
+
+    private string PanelUrl => SelectedNode is null ? string.Empty : BuildPanelUrl(SelectedNode);
+
+    protected override void OnParametersSet()
+    {
+        if (_initialized)
+        {
+            return;
+        }
+
+        _initialized = true;
+        if (LockedNodeId is Guid locked && FindNode(locked.ToString()) is { IsEnabled: true })
+        {
+            _selectedValue = locked.ToString();
+        }
+    }
+
+    private NodeSummary? FindNode(string? value)
+    {
+        if (!Guid.TryParse(value, out var id))
+        {
+            return null;
+        }
+
+        return Nodes.FirstOrDefault(node => node.Id.Value == id && node.IsEnabled);
+    }
+
+    private void OnNodeChanged(ChangeEventArgs args) => _selectedValue = args.Value?.ToString() ?? string.Empty;
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+
+    private static string BuildPanelUrl(NodeSummary node)
+    {
+        var baseUrl = node.BaseUrl.AbsoluteUri.TrimEnd('/');
+        var entrance = string.IsNullOrWhiteSpace(node.SecurityEntrance)
+            ? string.Empty
+            : "/" + node.SecurityEntrance.Trim('/');
+        return baseUrl + entrance + "/websites";
+    }
+}

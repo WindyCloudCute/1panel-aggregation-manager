@@ -1,0 +1,196 @@
+@using PanelFleet.Application.AppStore
+@* 应用详情抽屉：只展示应用信息；安装动作进入独立安装向导（选节点 → 参数 → 确认 → 执行）。 *@
+<div class="drawer-backdrop" @onclick="() => OnClose.InvokeAsync()">
+    <aside class="appstore-detail-drawer" role="dialog" aria-label="应用详情" @onclick:stopPropagation="true">
+        <div class="drawer-head">
+            <div class="drawer-head-main">
+                <h2>@(Detail?.Name ?? "应用详情")</h2>
+                <div class="muted small">
+                    @if (string.IsNullOrWhiteSpace(NodeName))
+                    {
+                        <span>应用商店</span>
+                    }
+                    else
+                    {
+                        <span>来自节点：@NodeName</span>
+                    }
+                </div>
+            </div>
+            <div class="actions">
+                @if (Detail is not null)
+                {
+                    @if (Installed || Detail.Installed)
+                    {
+                        <span class="badge badge-ok">已安装</span>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary" type="button" disabled="@Busy" @onclick="() => OnInstall.InvokeAsync()">
+                            安装应用
+                        </button>
+                    }
+                }
+                <button class="btn" type="button" @onclick="() => OnClose.InvokeAsync()">关闭</button>
+            </div>
+        </div>
+
+        @if (Loading)
+        {
+            <div class="skeleton-stack">
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+            </div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(Error))
+        {
+            <div class="alert alert-error">@Error</div>
+        }
+
+        @if (Detail is not null)
+        {
+            <section class="drawer-section">
+                <div class="detail-title-row">
+                    <span class="app-avatar" aria-hidden="true">@AvatarText(Detail.Name)</span>
+                    <div class="detail-title-copy">
+                        <h3>@Detail.Name</h3>
+                        <div class="muted small">@Detail.Key · @Detail.Type</div>
+                    </div>
+                    <div class="detail-badges">
+                        @if (Installed || Detail.Installed)
+                        {
+                            <span class="badge badge-ok">已安装</span>
+                        }
+                        @if (Detail.HostMode)
+                        {
+                            <span class="badge badge-unknown">Host 网络</span>
+                        }
+                        @if (Detail.RequiresMemory)
+                        {
+                            <span class="badge badge-unknown">需要内存限制</span>
+                        }
+                        @if (Detail.GpuSupport)
+                        {
+                            <span class="badge badge-warn">支持 GPU</span>
+                        }
+                    </div>
+                </div>
+            </section>
+
+            <section class="drawer-section">
+                <h3>版本</h3>
+                <div class="version-badges">
+                    @if (Detail.Versions.Count == 0)
+                    {
+                        <span class="muted">暂无可用版本</span>
+                    }
+                    @foreach (var version in Detail.Versions)
+                    {
+                        <span class="badge @(version == Detail.Version ? "badge-ok" : "badge-unknown")">@version</span>
+                    }
+                </div>
+                <p class="muted small">当前查看版本：@Detail.Version；安装时可在安装向导中切换版本。</p>
+            </section>
+
+            <section class="drawer-section">
+                <h3>应用介绍</h3>
+                @if (!string.IsNullOrWhiteSpace(Detail.ShortDescZh))
+                {
+                    <p class="detail-desc">@Detail.ShortDescZh</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(Detail.ShortDescEn))
+                {
+                    <p class="muted detail-desc">@Detail.ShortDescEn</p>
+                }
+                @if (string.IsNullOrWhiteSpace(Detail.ShortDescZh) && string.IsNullOrWhiteSpace(Detail.ShortDescEn))
+                {
+                    <p class="muted">1Panel 应用商店没有提供该应用的中文/英文简介。</p>
+                }
+            </section>
+
+            <section class="drawer-section">
+                <h3>相关链接</h3>
+                @if (string.IsNullOrWhiteSpace(Detail.Website)
+                     && string.IsNullOrWhiteSpace(Detail.Document)
+                     && string.IsNullOrWhiteSpace(Detail.Github))
+                {
+                    <p class="muted">该应用没有提供官网、文档或 GitHub 链接。</p>
+                }
+                else
+                {
+                    <div class="link-list">
+                        @if (!string.IsNullOrWhiteSpace(Detail.Website))
+                        {
+                            <a class="btn" href="@Detail.Website" target="_blank" rel="noopener noreferrer">官网</a>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(Detail.Document))
+                        {
+                            <a class="btn" href="@Detail.Document" target="_blank" rel="noopener noreferrer">文档</a>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(Detail.Github))
+                        {
+                            <a class="btn" href="@Detail.Github" target="_blank" rel="noopener noreferrer">GitHub</a>
+                        }
+                    </div>
+                }
+            </section>
+
+            <section class="drawer-section">
+                <h3>安装说明</h3>
+                <p class="muted">
+                    共 @Detail.FormFields.Count 个安装参数，需在安装向导中选择目标节点后填写。
+                    安装会写入所选节点，预览确认后才会执行。
+                </p>
+            </section>
+
+            @if (!string.IsNullOrWhiteSpace(Detail.DockerCompose))
+            {
+                <section class="drawer-section">
+                    <h3>默认 docker-compose</h3>
+                    <pre class="detail-code">@Detail.DockerCompose</pre>
+                </section>
+            }
+        }
+    </aside>
+</div>
+
+@code {
+    /// <summary>应用详情（为空时只显示加载/错误态）。</summary>
+    [Parameter]
+    public AppStoreDetail? Detail { get; set; }
+
+    /// <summary>详情加载中。</summary>
+    [Parameter]
+    public bool Loading { get; set; }
+
+    /// <summary>详情加载失败信息。</summary>
+    [Parameter]
+    public string? Error { get; set; }
+
+    /// <summary>当前已安装（在所选节点上）。</summary>
+    [Parameter]
+    public bool Installed { get; set; }
+
+    /// <summary>详情来源节点名（应用商店按节点读取）。</summary>
+    [Parameter]
+    public string? NodeName { get; set; }
+
+    /// <summary>安装动作进行中。</summary>
+    [Parameter]
+    public bool Busy { get; set; }
+
+    /// <summary>关闭抽屉。</summary>
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    /// <summary>点击「安装应用」，进入独立安装向导。</summary>
+    [Parameter]
+    public EventCallback OnInstall { get; set; }
+
+    private static string AvatarText(string name)
+    {
+        var trimmed = name.Trim();
+        return trimmed.Length == 0 ? "?" : trimmed[..1].ToUpperInvariant();
+    }
+}

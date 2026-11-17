@@ -1,0 +1,557 @@
+@using PanelFleet.Application.Models
+@using PanelFleet.Application.Websites
+@using PanelFleet.Web.Components.Websites
+@inject WebsiteService WebsiteService
+
+<div class="modal-backdrop" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="modal website-modal website-wizard" @onclick:stopPropagation="true">
+        <div class="wizard-head">
+            <div>
+                <h2>新建网站</h2>
+                <p class="muted small">先在目标节点创建网站目录与 Nginx 配置；提交后仍需在 1Panel 中等待后台任务完成。</p>
+            </div>
+            <ol class="wizard-steps" aria-label="建站步骤">
+                <li class="@StepClass(1)"><span>1</span>节点与域名</li>
+                <li class="@StepClass(2)"><span>2</span>运行环境</li>
+                <li class="@StepClass(3)"><span>3</span>确认提交</li>
+            </ol>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-error" role="alert">@_error</div>
+        }
+
+        @if (_step == 1)
+        {
+            <div class="form-row">
+                <label class="form-label">目标节点 <span class="required">*</span></label>
+                @if (LockedNodeId is Guid)
+                {
+                    <input value="@LockedNodeName" readonly disabled="@Busy" />
+                    <span class="muted small">从节点上下文发起，目标节点已锁定。建站只支持单节点。</span>
+                }
+                else
+                {
+                    <select @bind="_nodeValue" @bind:after="LoadNodeDataAsync" disabled="@Busy">
+                        <option value="">请选择节点…</option>
+                        @foreach (var node in Nodes)
+                        {
+                            <option value="@node.Id.Value" disabled="@(!node.IsEnabled)">@node.Name@(node.IsEnabled ? string.Empty : "（已禁用）")</option>
+                        }
+                    </select>
+                    <span class="muted small">建站只能针对单个节点；未选择节点时无法继续。</span>
+                }
+            </div>
+
+            <div class="form-row">
+                <label class="form-label">网站类型 <span class="required">*</span></label>
+                <div class="wizard-types" role="radiogroup" aria-label="网站类型">
+                    @foreach (var option in TypeOptions)
+                    {
+                        <button type="button"
+                                class="wizard-type @(_type == option.Value ? "is-active" : string.Empty)"
+                                role="radio"
+                                aria-checked="@(_type == option.Value)"
+                                @onclick="() => SelectType(option.Value)"
+                                disabled="@Busy">
+                            <strong>@option.Label</strong>
+                            <span>@option.Hint</span>
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="form-row">
+                <label class="form-label">主域名 <span class="required">*</span></label>
+                <input @bind="_primaryDomain" @bind:event="oninput" maxlength="253" placeholder="example.com" disabled="@Busy" />
+                <span class="muted small">请确认域名已解析到目标节点；创建后可在域名管理中调整。</span>
+            </div>
+
+            <div class="form-row">
+                <label class="form-label">其他域名</label>
+                <textarea @bind="_otherDomainsText" rows="2" placeholder="每行一个，或用逗号分隔" disabled="@Busy"></textarea>
+                <span class="muted small">可选，最多 20 个；会绑定到同一个网站。</span>
+            </div>
+        }
+        else if (_step == 2)
+        {
+            <div class="wizard-summary-line">
+                <span class="badge badge-ok">@TypeLabel</span>
+                <span>@_primaryDomain</span>
+                <span class="muted small">@SelectedNodeName</span>
+            </div>
+
+            @if (_type == "runtime")
+            {
+                <div class="form-row">
+                    <label class="form-label">PHP 运行环境 <span class="required">*</span></label>
+                    <select @bind="_runtimeId" disabled="@Busy">
+                        <option value="0">请选择运行环境…</option>
+                        @foreach (var runtime in _runtimes)
+                        {
+                            <option value="@runtime.Id">@runtime.Name（@runtime.Status）</option>
+                        }
+                    </select>
+                    @if (_runtimes.Count == 0)
+                    {
+                        <span class="muted small">该节点没有可用的 PHP 运行环境；请先在 1Panel 中创建运行环境。</span>
+                    }
+                </div>
+                <div class="form-row">
+                    <label class="form-label">网站端口</label>
+                    <input type="number" min="1" max="65535" @bind="_port" disabled="@Busy" />
+                    <span class="muted small">运行环境建站默认使用 TCP 反代到该端口。</span>
+                </div>
+            }
+            else if (_type == "proxy")
+            {
+                <div class="form-row">
+                    <label class="form-label">代理目标 <span class="required">*</span></label>
+                    <input @bind="_proxy" @bind:event="oninput" placeholder="http://127.0.0.1:8080" maxlength="512" disabled="@Busy" />
+                    <span class="muted small">目标后端不可访问时，网站会返回 502。</span>
+                </div>
+            }
+            else if (_type == "subsite")
+            {
+                <div class="form-row">
+                    <label class="form-label">父网站 <span class="required">*</span></label>
+                    <select @bind="_parentWebsiteId" disabled="@Busy">
+                        <option value="0">请选择父网站…</option>
+                        @foreach (var option in _options)
+                        {
+                            <option value="@option.Id">@option.PrimaryDomain@(string.IsNullOrWhiteSpace(option.Alias) ? string.Empty : $"（{option.Alias}）")</option>
+                        }
+                    </select>
+                    @if (_options.Count == 0)
+                    {
+                        <span class="muted small">该节点还没有网站，无法创建子网站。</span>
+                    }
+                </div>
+                <div class="form-row">
+                    <label class="form-label">站点目录</label>
+                    <input @bind="_siteDir" placeholder="/www/wwwroot/example.com" maxlength="512" disabled="@Busy" />
+                </div>
+            }
+
+            <div class="wizard-form-grid">
+                <div class="form-row">
+                    <label class="form-label">网站别名</label>
+                    <input @bind="_alias" maxlength="128" placeholder="默认使用主域名" disabled="@Busy" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">分组</label>
+                    <select @bind="_groupId" disabled="@Busy">
+                        <option value="0">默认分组</option>
+                        @foreach (var group in Groups)
+                        {
+                            <option value="@group.Id">@group.Name</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <label class="form-label">备注</label>
+                <input @bind="_remark" maxlength="128" disabled="@Busy" />
+            </div>
+
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline">
+                    <input type="checkbox" @bind="_ipv6" disabled="@Busy" />
+                    <span>启用 IPv6</span>
+                </label>
+            </div>
+        }
+        else
+        {
+            <section class="drawer-section wizard-confirm">
+                <h3>确认建站信息</h3>
+                <table class="table detail-table">
+                    <tbody>
+                        <tr><th>节点</th><td>@SelectedNodeName</td></tr>
+                        <tr><th>类型</th><td>@TypeLabel</td></tr>
+                        <tr><th>主域名</th><td>@_primaryDomain</td></tr>
+                        <tr><th>其他域名</th><td>@(OtherDomains.Count == 0 ? "-" : string.Join("，", OtherDomains))</td></tr>
+                        <tr><th>别名</th><td>@EffectiveAlias</td></tr>
+                        <tr><th>分组</th><td>@GroupLabel</td></tr>
+                        @if (_type == "runtime")
+                        {
+                            <tr><th>运行环境</th><td>@RuntimeLabel</td></tr>
+                            <tr><th>端口</th><td>@_port</td></tr>
+                        }
+                        @if (_type == "proxy")
+                        {
+                            <tr><th>代理目标</th><td class="detail-cell">@_proxy</td></tr>
+                        }
+                        @if (_type == "subsite")
+                        {
+                            <tr><th>父网站</th><td>@ParentWebsiteLabel</td></tr>
+                            <tr><th>站点目录</th><td class="detail-cell">@(string.IsNullOrWhiteSpace(_siteDir) ? "-" : _siteDir)</td></tr>
+                        }
+                        <tr><th>备注</th><td>@(string.IsNullOrWhiteSpace(_remark) ? "-" : _remark)</td></tr>
+                        <tr><th>IPv6</th><td>@(_ipv6 ? "启用" : "不启用")</td></tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <div class="alert alert-warn">
+                建站会写入 1Panel Nginx 配置并可能创建站点目录，操作不会自动回滚；创建后 1Panel 会在后台执行任务，列表可能需要稍后刷新。提交前需要完成强确认。
+            </div>
+        }
+
+        @if (SelectedNodeId is Guid && (_loadingNodeData || _precheckLoading || _precheckIssues.Count > 0 || !string.IsNullOrWhiteSpace(_precheckError)))
+        {
+            <div class="wizard-precheck">
+                @if (_loadingNodeData || _precheckLoading)
+                {
+                    <p class="muted small">正在检查建站前置条件（OpenResty 等）…</p>
+                }
+                else if (_precheckIssues.Count > 0)
+                {
+                    <div class="alert alert-warn" role="alert">
+                        <strong>建站预检查未通过</strong>
+                        <ul class="wizard-precheck-list">
+                            @foreach (var issue in _precheckIssues)
+                            {
+                                <li>
+                                    @(string.IsNullOrWhiteSpace(issue.AppName) ? issue.Name : issue.AppName)
+                                    @if (!string.IsNullOrWhiteSpace(issue.Status))
+                                    {
+                                        <span> · @issue.Status</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(issue.Version))
+                                    {
+                                        <span> · 版本 @issue.Version</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                        <p class="small">请先在目标节点安装缺失应用，安装完成后点击「重新检查」；预检查通过前不能提交建站。</p>
+                        <div class="actions">
+                            @foreach (var app in MissingApps)
+                            {
+                                <a class="btn btn-primary" href="@app.Url">去应用商店安装 @app.Name</a>
+                            }
+                            <button type="button" class="btn" @onclick="ReloadPrecheckAsync" disabled="@Busy">重新检查</button>
+                        </div>
+                    </div>
+                }
+                else if (!string.IsNullOrWhiteSpace(_precheckError))
+                {
+                    <div class="alert alert-warn" role="alert">
+                        <span>预检查暂不可用：@_precheckError</span>
+                        <button type="button" class="btn" @onclick="ReloadPrecheckAsync" disabled="@Busy">重试</button>
+                    </div>
+                }
+                else
+                {
+                    <p class="muted small">建站前置条件检查通过。</p>
+                }
+            </div>
+        }
+
+        <div class="modal-actions wizard-actions">
+            @if (_step > 1)
+            {
+                <button type="button" class="btn" @onclick="PreviousStep" disabled="@Busy">上一步</button>
+            }
+            <span class="wizard-spacer"></span>
+            <button type="button" class="btn" @onclick="() => OnCancel.InvokeAsync()" disabled="@Busy">取消</button>
+            @if (_step < 3)
+            {
+                <button type="button" class="btn btn-primary" @onclick="NextStep" disabled="@(Busy || !CanContinue)">下一步</button>
+            }
+            else
+            {
+                <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@Busy">
+                    @(Busy ? "处理中…" : "预览确认")
+                </button>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private static readonly (string Value, string Label, string Hint)[] TypeOptions =
+    [
+        ("static", "静态网站", "仅托管静态文件，不依赖运行环境。"),
+        ("runtime", "PHP 网站", "使用节点上的 PHP 运行环境，反向代理到网站端口。"),
+        ("proxy", "反向代理", "把域名请求转发到已有后端地址。"),
+        ("subsite", "子网站", "复用父网站的目录与运行环境。")
+    ];
+
+    private int _step = 1;
+    private string _nodeValue = string.Empty;
+    private string _type = "static";
+    private string _primaryDomain = string.Empty;
+    private string _otherDomainsText = string.Empty;
+    private string _alias = string.Empty;
+    private string _remark = string.Empty;
+    private long _groupId;
+    private int _port = 80;
+    private long _runtimeId;
+    private readonly string _runtimeType = "php";
+    private string _proxy = string.Empty;
+    private long _parentWebsiteId;
+    private string _siteDir = string.Empty;
+    private bool _ipv6;
+    private bool _loadingNodeData;
+    private bool _precheckLoading;
+    private string? _error;
+    private string? _precheckError;
+    private IReadOnlyList<WebsitePrecheckIssue> _precheckIssues = [];
+    private IReadOnlyList<WebsiteRuntime> _runtimes = [];
+    private IReadOnlyList<WebsiteOption> _options = [];
+    private Guid? _nodeDataLoadedFor;
+
+    [Parameter]
+    public IReadOnlyList<NodeSummary> Nodes { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyList<WebsiteGroupInfo> Groups { get; set; } = [];
+
+    [Parameter]
+    public Guid? LockedNodeId { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteCreateWizardResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private Guid? SelectedNodeId =>
+        LockedNodeId ?? (Guid.TryParse(_nodeValue, out var id) ? id : null);
+
+    private string SelectedNodeName =>
+        SelectedNodeId is Guid id
+            ? Nodes.FirstOrDefault(node => node.Id.Value == id)?.Name ?? id.ToString()
+            : "未选择节点";
+
+    private string LockedNodeName => SelectedNodeName;
+
+    private string TypeLabel => TypeOptions.FirstOrDefault(option => option.Value == _type).Label ?? _type;
+
+    private string EffectiveAlias => string.IsNullOrWhiteSpace(_alias) ? _primaryDomain : _alias.Trim();
+
+    private string GroupLabel => _groupId <= 0
+        ? "默认分组"
+        : Groups.FirstOrDefault(group => group.Id == _groupId)?.Name ?? $"分组 #{_groupId}";
+
+    private string RuntimeLabel => _runtimes.FirstOrDefault(runtime => runtime.Id == _runtimeId)?.Name
+        ?? (_runtimeId > 0 ? $"运行环境 #{_runtimeId}" : "-");
+
+    private string ParentWebsiteLabel => _options.FirstOrDefault(option => option.Id == _parentWebsiteId)?.PrimaryDomain
+        ?? (_parentWebsiteId > 0 ? $"网站 #{_parentWebsiteId}" : "-");
+
+    private IReadOnlyList<string> OtherDomains =>
+        _otherDomainsText
+            .Split([',', '，', ';', '；', '\n', '\r', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(domain => !string.Equals(domain, _primaryDomain.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .ToArray();
+
+    private IReadOnlyList<MissingAppLink> MissingApps =>
+        _precheckIssues
+            .Select(issue => string.IsNullOrWhiteSpace(issue.AppName) ? issue.Name : issue.AppName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(name =>
+            {
+                var url = "/appstore?app=" + Uri.EscapeDataString(name.Trim().ToLowerInvariant());
+                if (SelectedNodeId is Guid nodeId)
+                {
+                    url += "&nodeId=" + nodeId.ToString("D");
+                }
+
+                return new MissingAppLink(name, url);
+            })
+            .ToArray();
+
+    private sealed record MissingAppLink(string Name, string Url);
+
+    private bool CanContinue => _step switch
+    {
+        1 => SelectedNodeId is Guid && !string.IsNullOrWhiteSpace(_primaryDomain) && !_loadingNodeData
+             && !_precheckLoading && _precheckIssues.Count == 0,
+        2 => _precheckIssues.Count == 0 && _type switch
+        {
+            "runtime" => _runtimeId > 0,
+            "proxy" => !string.IsNullOrWhiteSpace(_proxy),
+            "subsite" => _parentWebsiteId > 0,
+            _ => true
+        },
+        _ => true
+    };
+
+    protected override void OnParametersSet()
+    {
+        if (_nodeValue.Length == 0 && LockedNodeId is Guid locked)
+        {
+            _nodeValue = locked.ToString("D");
+        }
+
+        if (_step == 1 && SelectedNodeId is Guid targetNodeId
+            && _nodeDataLoadedFor != targetNodeId && !_loadingNodeData)
+        {
+            _ = LoadNodeDataAsync();
+        }
+    }
+
+    private void SelectType(string type)
+    {
+        _type = type;
+        _error = null;
+    }
+
+    private void NextStep()
+    {
+        if (!CanContinue)
+        {
+            _error = _precheckIssues.Count > 0
+                ? "建站预检查未通过：请先安装缺失应用并重新检查。"
+                : _step == 1 ? "请选择节点并填写主域名。" : "请补齐运行环境、代理目标或父网站。";
+            return;
+        }
+
+        _error = null;
+        _step = Math.Min(3, _step + 1);
+    }
+
+    private void PreviousStep()
+    {
+        _error = null;
+        _step = Math.Max(1, _step - 1);
+    }
+
+    private async Task LoadNodeDataAsync()
+    {
+        if (SelectedNodeId is not Guid nodeId)
+        {
+            _runtimes = [];
+            _options = [];
+            _precheckIssues = [];
+            _precheckError = null;
+            _nodeDataLoadedFor = null;
+            return;
+        }
+
+        _nodeDataLoadedFor = nodeId;
+        _loadingNodeData = true;
+        _precheckIssues = [];
+        _precheckError = null;
+        _runtimeId = 0;
+        _parentWebsiteId = 0;
+        try
+        {
+            var runtimesTask = WebsiteService.GetPhpRuntimesAsync(nodeId, CancellationToken.None);
+            var optionsTask = WebsiteService.GetCreateOptionsAsync(nodeId, CancellationToken.None);
+            await Task.WhenAll(runtimesTask, optionsTask);
+            _runtimes = await runtimesTask;
+            _options = await optionsTask;
+            if (_runtimes.Count == 1)
+            {
+                _runtimeId = _runtimes[0].Id;
+            }
+
+            _precheckLoading = true;
+            try
+            {
+                _precheckIssues = await WebsiteService.PrecheckAsync(nodeId, CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                _precheckError = exception.Message;
+            }
+            finally
+            {
+                _precheckLoading = false;
+            }
+        }
+        catch (Exception exception)
+        {
+            _runtimes = [];
+            _options = [];
+            _precheckIssues = [];
+            _error = "读取节点建站信息失败：" + exception.Message;
+        }
+        finally
+        {
+            _loadingNodeData = false;
+        }
+    }
+
+    private async Task ReloadPrecheckAsync()
+    {
+        if (SelectedNodeId is not Guid nodeId)
+        {
+            return;
+        }
+
+        _precheckLoading = true;
+        _precheckError = null;
+        try
+        {
+            _precheckIssues = await WebsiteService.PrecheckAsync(nodeId, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _precheckIssues = [];
+            _precheckError = exception.Message;
+        }
+        finally
+        {
+            _precheckLoading = false;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (SelectedNodeId is not Guid nodeId)
+        {
+            _error = "请选择目标节点。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_primaryDomain))
+        {
+            _error = "请填写主域名。";
+            return;
+        }
+
+        if (_precheckIssues.Count > 0)
+        {
+            _error = "建站预检查未通过：请先安装缺失应用并重新检查。";
+            return;
+        }
+
+        if (_precheckLoading)
+        {
+            _error = "正在检查建站前置条件，请稍候。";
+            return;
+        }
+
+        _error = null;
+        await OnSubmit.InvokeAsync(new WebsiteCreateWizardResult(
+            nodeId,
+            _type,
+            _primaryDomain.Trim(),
+            OtherDomains,
+            string.IsNullOrWhiteSpace(_alias) ? null : _alias.Trim(),
+            string.IsNullOrWhiteSpace(_remark) ? null : _remark.Trim(),
+            _groupId,
+            _port,
+            _runtimeId,
+            _type == "runtime" ? _runtimeType : null,
+            _type == "proxy" ? _proxy.Trim() : null,
+            _type == "subsite" ? _parentWebsiteId : 0,
+            _type == "subsite" && !string.IsNullOrWhiteSpace(_siteDir) ? _siteDir.Trim() : null,
+            _ipv6));
+    }
+
+    private string StepClass(int step) => step == _step ? "is-current" : step < _step ? "is-done" : string.Empty;
+}

@@ -1,0 +1,326 @@
+@page "/panel-update"
+@attribute [Authorize]
+@using PanelFleet.Application.PanelUpdates
+@using PanelFleet.Web.Components.PanelUpdates
+@inject IPanelUpdateService UpdateService
+@inject IWriteOperationService WriteOperations
+@inject IActorProvider Actors
+
+<PageTitle>面板更新</PageTitle>
+
+<div class="page-header">
+    <h1>面板更新</h1>
+    <div class="actions">
+        @if (_check is not null)
+        {
+            <span class="muted small">检查于 @FormatTime(_check.CheckedAt)（Asia/Shanghai）</span>
+        }
+        @if (_loading)
+        {
+            <span class="muted small">检查中…</span>
+        }
+        <button type="button" class="btn btn-primary"
+                @onclick="CheckAsync"
+                disabled="@(_loading || _busy)">
+            @(_loading ? "检查中…" : "检查更新")
+        </button>
+    </div>
+</div>
+
+<PanelUpdateRiskNotice />
+
+@if (_error is not null)
+{
+    <div class="alert alert-error">@_error</div>
+}
+
+@if (_executionError is not null)
+{
+    <div class="alert alert-error">@_executionError</div>
+}
+
+@if (_check is null)
+{
+    @if (_loading)
+    {
+        <UpdateSkeleton />
+    }
+    else if (_error is null)
+    {
+        <p class="muted">尚未检查：点击右上角「检查更新」开始，或稍候自动检查。</p>
+    }
+}
+else
+{
+    <UpdateWorkbench>
+        <Tree>
+            <UpdateNodeTree Nodes="_check.Nodes"
+                            SelectedNodeIds="_selected"
+                            Busy="@(_busy || _loading)"
+                            HighlightedNodeId="@_highlightedNodeId"
+                            OnToggleSelection="ToggleSelection"
+                            OnToggleAll="ToggleAllSelection"
+                            OnSelectNode="OnSelectTreeNode" />
+        </Tree>
+        <Main>
+            <div class="update-summary">
+                <span class="badge badge-ok">可升级 @_check.UpgradeableCount</span>
+                <span class="badge badge-unknown">已是最新 @_check.UpToDateCount</span>
+                <span class="badge badge-error">异常 @_check.FailedCount</span>
+                <span class="muted small">共 @_check.Nodes.Count 个节点</span>
+                @if (_check.CommonTargetVersion is { } commonTarget)
+                {
+                    <span class="muted small">统一目标版本：@commonTarget</span>
+                }
+            </div>
+
+            <div class="update-batch-bar card">
+                <div class="update-batch-actions">
+                    <span>已选择 <strong>@_selected.Count</strong> 个节点</span>
+                    <button type="button" class="btn btn-danger"
+                            @onclick="BatchUpgradeAsync"
+                            disabled="@(_busy || _selected.Count < 2)">
+                        批量升级
+                    </button>
+                </div>
+                <p class="muted small">
+                    默认单节点升级（行内按钮）；批量升级必须显式勾选至少 2 个可升级节点，逐节点顺序执行，任一节点失败即停止后续节点。
+                </p>
+            </div>
+
+            <PanelVersionTable Nodes="_check.Nodes"
+                               SelectedNodeIds="_selected"
+                               Busy="_busy || _loading"
+                               HighlightedNodeId="_highlightedNodeId"
+                               OnToggleSelection="ToggleSelection"
+                               OnUpgrade="SingleUpgradeAsync" />
+        </Main>
+    </UpdateWorkbench>
+}
+
+@if (_execution is not null)
+{
+    <div class="update-result">
+        <div class="update-result-header">
+            <h2>执行结果</h2>
+            <div class="actions">
+                <a class="btn" href="/audit">查看审计记录</a>
+                <button type="button" class="btn" @onclick="() => _execution = null">关闭</button>
+            </div>
+        </div>
+        <OperationResultView Execution="_execution" />
+        <p class="muted small">
+            升级失败不会自动回滚或重试：请按结果中的节点顺序人工登录排查，处理完成后再回到本页重新检查更新。
+        </p>
+    </div>
+}
+
+<OperationConfirmDialog Preview="_preview"
+                       Busy="_busy"
+                       OnConfirm="OnConfirmAsync"
+                       OnCancel="CancelPreview" />
+
+@code {
+    private PanelVersionCheckResult? _check;
+    private readonly HashSet<Guid> _selected = [];
+    private Guid? _highlightedNodeId;
+    private bool _initialCheckStarted;
+    private bool _loading;
+    private bool _busy;
+    private string? _error;
+    private string? _executionError;
+
+    private OperationPreview? _preview;
+    private OperationExecution? _execution;
+    private ActorInfo? _actor;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // 预渲染阶段不访问 1Panel（避免阻塞首屏）；交互模式建立后自动做一次版本检查。
+        if (!firstRender || _initialCheckStarted || !RendererInfo.IsInteractive)
+        {
+            return;
+        }
+
+        _initialCheckStarted = true;
+        await CheckAsync();
+        StateHasChanged();
+    }
+
+    private async Task CheckAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _check = await UpdateService.CheckVersionsAsync(null, CancellationToken.None);
+            PruneSelection();
+        }
+        catch (Exception exception)
+        {
+            _error = "检查更新失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ToggleSelection(Guid nodeId)
+    {
+        if (!_selected.Remove(nodeId))
+        {
+            _selected.Add(nodeId);
+        }
+    }
+
+    private void ToggleAllSelection(bool selectAll)
+    {
+        if (_check is null)
+        {
+            return;
+        }
+
+        foreach (var node in _check.Nodes.Where(node => node.CanUpgrade))
+        {
+            if (selectAll)
+            {
+                _selected.Add(node.NodeId.Value);
+            }
+            else
+            {
+                _selected.Remove(node.NodeId.Value);
+            }
+        }
+    }
+
+    private void OnSelectTreeNode(Guid nodeId) =>
+        _highlightedNodeId = nodeId == Guid.Empty ? null : nodeId;
+
+    private async Task SingleUpgradeAsync(PanelNodeVersionInfo node)
+    {
+        await StartPreviewAsync([node.NodeId]);
+    }
+
+    private async Task BatchUpgradeAsync()
+    {
+        NodeId[] nodeIds = _check is null
+            ? []
+            : _check.Nodes
+                .Where(node => node.CanUpgrade && _selected.Contains(node.NodeId.Value))
+                .Select(node => node.NodeId)
+                .ToArray();
+
+        if (nodeIds.Length < 2)
+        {
+            _error = "批量升级必须显式勾选至少 2 个可升级节点；单个节点请使用行内「单节点升级」。";
+            return;
+        }
+
+        await StartPreviewAsync(nodeIds);
+    }
+
+    private async Task StartPreviewAsync(IReadOnlyList<NodeId> nodeIds)
+    {
+        _busy = true;
+        _error = null;
+        _executionError = null;
+        try
+        {
+            var actor = await GetActorAsync();
+            _preview = await WriteOperations.PreviewAsync(
+                new OperationInvocation("panel.update", nodeIds),
+                actor,
+                CancellationToken.None);
+        }
+        catch (OperationValidationException exception)
+        {
+            _error = exception.Message;
+        }
+        catch (OperationNotSupportedException exception)
+        {
+            _error = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _error = "生成升级预览失败：" + exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnConfirmAsync(string? typedText)
+    {
+        if (_preview is null)
+        {
+            return;
+        }
+
+        _busy = true;
+        _executionError = null;
+        try
+        {
+            var actor = await GetActorAsync();
+            _execution = await WriteOperations.ExecuteAsync(
+                _preview.TokenId,
+                typedText,
+                actor,
+                CancellationToken.None);
+            _preview = null;
+            await CheckAsync();
+        }
+        catch (OperationConfirmationException exception)
+        {
+            // 确认 Token 一次性：失败后必须重新预览。
+            _preview = null;
+            _executionError = exception.Message;
+        }
+        catch (OperationValidationException exception)
+        {
+            _executionError = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _executionError = "执行升级失败：" + exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CancelPreview()
+    {
+        if (!_busy)
+        {
+            _preview = null;
+        }
+    }
+
+    private async Task<ActorInfo> GetActorAsync() => _actor ??= await Actors.GetAsync();
+
+    private void PruneSelection()
+    {
+        if (_check is null)
+        {
+            _selected.Clear();
+            return;
+        }
+
+        var allowed = _check.Nodes
+            .Where(node => node.CanUpgrade)
+            .Select(node => node.NodeId.Value)
+            .ToHashSet();
+        _selected.RemoveWhere(nodeId => !allowed.Contains(nodeId));
+
+        if (_highlightedNodeId is { } highlighted
+            && !_check.Nodes.Any(node => node.NodeId.Value == highlighted))
+        {
+            _highlightedNodeId = null;
+        }
+    }
+
+    private static string FormatTime(DateTimeOffset time) => time.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+}

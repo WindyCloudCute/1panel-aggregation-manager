@@ -1,0 +1,70 @@
+@using PanelFleet.Application.Databases
+@using PanelFleet.Web.Components.Databases
+
+<div class="modal-backdrop" @onclick="OnCancel">
+    <div class="modal" style="max-width: 520px;" @onclick:stopPropagation="true">
+        <h2>修改 Redis 配置</h2>
+        <p class="muted small">实例 @Instance；保存会重载 Redis 配置，可能导致短暂连接中断。留空表示不修改该项。</p>
+
+        <div class="form-row">
+            <label>timeout（秒）</label>
+            <input @bind="_timeout" placeholder="@Display(Conf?.Timeout)" inputmode="numeric" />
+        </div>
+        <div class="form-row">
+            <label>maxclients</label>
+            <input @bind="_maxclients" placeholder="@Display(Conf?.Maxclients)" inputmode="numeric" />
+        </div>
+        <div class="form-row">
+            <label>maxmemory（字节或 1mb 等格式）</label>
+            <input @bind="_maxmemory" placeholder="@Display(Conf?.Maxmemory)" />
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        <div class="actions">
+            <button type="button" class="btn" @onclick="OnCancel">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync">下一步：预览确认</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _timeout = string.Empty;
+    private string _maxclients = string.Empty;
+    private string _maxmemory = string.Empty;
+    private string? _error;
+
+    [Parameter, EditorRequired]
+    public string Instance { get; set; } = string.Empty;
+
+    [Parameter]
+    public DatabaseRedisConfView? Conf { get; set; }
+
+    [Parameter]
+    public EventCallback<RedisConfigForm> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private static string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "未设置" : value;
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_timeout)
+            && string.IsNullOrWhiteSpace(_maxclients)
+            && string.IsNullOrWhiteSpace(_maxmemory))
+        {
+            _error = "至少填写一个配置项。";
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(new RedisConfigForm(
+            _timeout.Trim(),
+            _maxclients.Trim(),
+            _maxmemory.Trim()));
+    }
+}

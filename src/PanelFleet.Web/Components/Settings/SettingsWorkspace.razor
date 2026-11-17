@@ -1,0 +1,655 @@
+@using System.Reflection
+@using System.Text.Json.Nodes
+@using Microsoft.AspNetCore.WebUtilities
+@using PanelFleet.Application.Configuration
+@using PanelFleet.Application.Operations
+@using PanelFleet.Application.Models
+@using PanelFleet.Application.Settings
+@using PanelFleet.Web.Components.Navigation
+@using PanelFleet.Web.Components.Settings
+
+@inject INodeService NodeService
+@inject IWriteOperationService WriteOperations
+@inject IActorProvider ActorProvider
+@inject PanelFleetSettingsService FleetSettings
+@inject PanelSettingsService PanelSettings
+@inject IConfiguration Configuration
+@inject NavigationManager Navigation
+@implements IDisposable
+
+@* 设置工作台：左侧分类（PanelFleet / 1Panel），1Panel 区复用 .workbench + NavTree 节点树。
+   数据层：PanelFleet 设置走 PanelFleetSettingsService（热生效 + 审计），1Panel 设置读取走
+   PanelSettingsService（按节点实时读取）；写面板设置统一走写操作内核（预览/确认/执行/审计）。 *@
+
+<PageShell CssClass="settings-page">
+    <div class="page-header settings-page-header">
+        <div>
+            <h1>设置</h1>
+            <p class="muted">PanelFleet 运行参数与各节点 1Panel 面板设置的统一入口。</p>
+        </div>
+    </div>
+
+    <div class="settings-workspace">
+        <aside class="settings-side-nav" aria-label="设置分类">
+            <button type="button"
+                    class="settings-nav-item @(_section == SettingsSection.PanelFleet ? "is-active" : string.Empty)"
+                    aria-current="@(_section == SettingsSection.PanelFleet ? "page" : null)"
+                    @onclick="() => SelectSection(SettingsSection.PanelFleet)">
+                <span class="settings-nav-title">PanelFleet 设置</span>
+                <span class="settings-nav-desc">刷新、缓存、终端、审计</span>
+            </button>
+            <button type="button"
+                    class="settings-nav-item @(_section == SettingsSection.Panel ? "is-active" : string.Empty)"
+                    aria-current="@(_section == SettingsSection.Panel ? "page" : null)"
+                    @onclick="() => SelectSection(SettingsSection.Panel)">
+                <span class="settings-nav-title">1Panel 面板设置</span>
+                <span class="settings-nav-desc">按节点查看与安全修改</span>
+            </button>
+        </aside>
+
+        <section class="settings-main">
+            @if (_section == SettingsSection.PanelFleet)
+            {
+                <PanelFleetSettingsPanel Model="_fleet"
+                                         View="@_fleetView"
+                                         Errors="_fleetErrors"
+                                         Busy="_fleetBusy"
+                                         Message="@_fleetMessage"
+                                         OnSave="SaveFleetAsync" />
+            }
+            else
+            {
+                @if (!string.IsNullOrWhiteSpace(_nodesError))
+                {
+                    <div class="alert alert-error">
+                        @_nodesError
+                        <button type="button" class="link-button" @onclick="LoadNodesAsync">重试</button>
+                    </div>
+                }
+
+                <div class="workbench settings-workbench">
+                    <aside class="workbench-tree">
+                        <NavTree Nodes="TreeNodes"
+                                 SelectedId="@SelectedTreeId"
+                                 SelectableBranches="true"
+                                 Searchable="true"
+                                 SearchPlaceholder="搜索节点…"
+                                 EmptyText="@(_nodesLoading ? "正在加载节点…" : "暂无节点")"
+                                 AriaLabel="节点设置导航"
+                                 Header="@HeaderNode"
+                                 OnSelect="OnTreeNodeSelectedAsync" />
+                    </aside>
+
+                    <section class="workbench-main">
+                        @if (_panelWarnings.Count > 0)
+                        {
+                            <div class="alert alert-warn">
+                                @foreach (var warning in _panelWarnings)
+                                {
+                                    <div>@warning</div>
+                                }
+                            </div>
+                        }
+
+                        @if (_operationError is not null)
+                        {
+                            <div class="alert alert-error">@_operationError</div>
+                        }
+
+                        @if (_execution is not null)
+                        {
+                            <OperationResultView Execution="_execution" />
+                        }
+
+                        <PanelSettingsPanel Model="_panel"
+                                            Loading="_panelLoading"
+                                            Busy="_operationBusy"
+                                            Error="@_panelError"
+                                            OnReload="ReloadPanelAsync"
+                                            OnRename="RequestRenameAsync"
+                                            OnChangePassword="RequestPasswordAsync"
+                                            OnToggleApi="RequestToggleApiAsync"
+                                            OnToggleTerminal="RequestToggleTerminalAsync" />
+                    </section>
+                </div>
+            }
+        </section>
+    </div>
+</PageShell>
+
+@if (_toast is not null)
+{
+    <div class="toast-stack" role="status" aria-live="polite">
+        <div class="toast toast-ok">
+            <div class="toast-title">已保存</div>
+            <div class="toast-body">@_toast</div>
+        </div>
+    </div>
+}
+
+<OperationConfirmDialog Preview="_preview"
+                       Busy="_operationBusy"
+                       OnConfirm="ConfirmOperationAsync"
+                       OnCancel="CancelOperation" />
+
+@code {
+    private static readonly RenderFragment HeaderNode = builder => builder.AddContent(0, "节点");
+
+    private SettingsSection _section = SettingsSection.PanelFleet;
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private bool _nodesLoading;
+    private string? _nodesError;
+    private string? _selectedNodeId;
+    private PanelSettingsModel? _panel;
+    private bool _panelLoading;
+    private string? _panelError;
+    private IReadOnlyList<string> _panelWarnings = [];
+    private readonly Dictionary<Guid, PanelSettingsModel> _panelCache = [];
+
+    private PanelFleetSettingsModel _fleet = new();
+    private PanelFleetSettingsView? _fleetView;
+    private IReadOnlyList<SettingsFieldError> _fleetErrors = [];
+    private bool _fleetBusy;
+    private string? _fleetMessage;
+
+    private OperationPreview? _preview;
+    private bool _operationBusy;
+    private string? _operationError;
+    private OperationExecution? _execution;
+
+    private string? _toast;
+    private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _toastCts;
+
+    private CancellationToken Token => _cts?.Token ?? CancellationToken.None;
+
+    private string SelectedTreeId => _selectedNodeId is null ? "all" : "node:" + _selectedNodeId;
+
+    private IReadOnlyList<NavTreeNode> TreeNodes
+    {
+        get
+        {
+            if (_nodes.Count == 0)
+            {
+                return [];
+            }
+
+            var leaves = _nodes
+                .Select(node => new NavTreeNode
+                {
+                    Id = "node:" + node.Id.Value.ToString("D"),
+                    Label = node.Name,
+                    Hint = string.IsNullOrWhiteSpace(node.PanelVersion) ? node.BaseUrl.Host : "v" + node.PanelVersion,
+                    BadgeText = node.IsEnabled ? null : "已停用",
+                    BadgeClass = node.IsEnabled ? null : "badge-unknown",
+                    Kind = NavTreeNodeKind.Leaf,
+                    IsDisabled = !node.IsEnabled,
+                })
+                .ToArray();
+
+            return
+            [
+                new NavTreeNode
+                {
+                    Id = "all",
+                    Label = "全部节点",
+                    Hint = $"{_nodes.Count} 个节点",
+                    Kind = NavTreeNodeKind.Branch,
+                    DefaultExpanded = true,
+                    Children = leaves,
+                }
+            ];
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cts = new CancellationTokenSource();
+        _fleet = CreateFleetModel();
+
+        var initialNode = ParseNodeId(Navigation.Uri);
+        _selectedNodeId = initialNode?.ToString("D");
+        _section = initialNode is null ? SettingsSection.PanelFleet : SettingsSection.Panel;
+
+        await LoadNodesAsync();
+        await LoadFleetViewAsync();
+        if (initialNode is { } nodeId)
+        {
+            await LoadPanelAsync(nodeId, force: false);
+        }
+
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private Task LoadFleetViewAsync()
+    {
+        try
+        {
+            var view = FleetSettings.GetView();
+            _fleetView = view;
+            SettingsMapping.ApplyFleetValues(_fleet, view.Values);
+            _fleet.NodeCount = _nodes.Count;
+            _fleetMessage = null;
+        }
+        catch (Exception exception)
+        {
+            _fleetMessage = "读取 PanelFleet 设置失败，已回退到启动配置：" + exception.Message;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+    }
+
+    private async Task LoadNodesAsync()
+    {
+        _nodesLoading = true;
+        _nodesError = null;
+        try
+        {
+            _nodes = await NodeService.ListAsync(Token);
+            _fleet.NodeCount = _nodes.Count;
+
+            if (_selectedNodeId is { } selected
+                && Guid.TryParse(selected, out var selectedId)
+                && _nodes.All(node => node.Id.Value != selectedId))
+            {
+                _selectedNodeId = null;
+                _panel = null;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _nodesError = "读取节点列表失败：" + exception.Message;
+        }
+        finally
+        {
+            _nodesLoading = false;
+        }
+    }
+
+    private void SelectSection(SettingsSection section)
+    {
+        _section = section;
+        _panelError = null;
+        _operationError = null;
+    }
+
+    private async Task OnTreeNodeSelectedAsync(NavTreeNode node)
+    {
+        if (node.IsDisabled)
+        {
+            return;
+        }
+
+        if (node.Id == "all")
+        {
+            _selectedNodeId = null;
+            _panel = null;
+            _panelError = null;
+            _execution = null;
+            _preview = null;
+            NavigateToNode(null);
+            return;
+        }
+
+        if (!node.IsLeaf || !node.Id.StartsWith("node:", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!Guid.TryParse(node.Id["node:".Length..], out var nodeId))
+        {
+            return;
+        }
+
+        _selectedNodeId = nodeId.ToString("D");
+        _section = SettingsSection.Panel;
+        NavigateToNode(_selectedNodeId);
+        await LoadPanelAsync(nodeId, force: false);
+    }
+
+    private async Task LoadPanelAsync(Guid nodeId, bool force)
+    {
+        _panelError = null;
+
+        if (!force && _panelCache.TryGetValue(nodeId, out var cached))
+        {
+            _panel = cached;
+            _panelLoading = false;
+            return;
+        }
+
+        _panelLoading = true;
+        _panelWarnings = [];
+        try
+        {
+            var node = _nodes.FirstOrDefault(item => item.Id.Value == nodeId);
+            if (node is null)
+            {
+                _panel = null;
+                _panelError = "节点不存在或已被删除。";
+                _panelCache.Remove(nodeId);
+                return;
+            }
+
+            var result = await PanelSettings.GetAsync(nodeId, Token);
+            if (!result.Found || result.View is null)
+            {
+                _panel = null;
+                _panelError = "该节点在 1Panel 侧不存在或已失联。";
+                _panelCache.Remove(nodeId);
+                return;
+            }
+
+            var model = SettingsMapping.ToPanelModel(result.View, node);
+            _panelCache[nodeId] = model;
+            _panel = model;
+            _panelWarnings = result.View.Warnings
+                .Concat(result.View.Unsupported)
+                .Where(message => !string.IsNullOrWhiteSpace(message))
+                .ToArray();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _panel = null;
+            _panelError = "读取 1Panel 面板设置失败：" + exception.Message;
+        }
+        finally
+        {
+            _panelLoading = false;
+        }
+    }
+
+    private async Task ReloadPanelAsync()
+    {
+        if (_selectedNodeId is null || !Guid.TryParse(_selectedNodeId, out var nodeId))
+        {
+            return;
+        }
+
+        _panelCache.Remove(nodeId);
+        await LoadPanelAsync(nodeId, force: true);
+    }
+
+    private async Task SaveFleetAsync(PanelFleetSettingsModel model)
+    {
+        _fleetBusy = true;
+        _fleetErrors = [];
+        _fleetMessage = null;
+
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            var result = await FleetSettings.UpdateAsync(SettingsMapping.ToFleetUpdate(model), actor, Token);
+            _fleetView = result.View;
+            _fleet = model.Clone();
+            SettingsMapping.ApplyFleetValues(_fleet, result.View.Values);
+            _fleet.NodeCount = _nodes.Count;
+            _fleetMessage = result.ChangedKeys.Count == 0
+                ? "没有需要保存的变更。"
+                : $"已保存并热生效（revision {result.View.Revision}，更新时间 {result.View.UpdatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}，变更 {result.ChangedKeys.Count} 项）。";
+            ShowToast("PanelFleet 设置已保存并热生效");
+        }
+        catch (PanelFleetSettingsValidationException exception)
+        {
+            _fleetErrors = SettingsMapping.MapFleetErrors(exception.Errors);
+            _fleetMessage = "保存失败：存在非法设置项，请按提示修正。";
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _fleetMessage = "保存 PanelFleet 设置失败：" + exception.Message;
+        }
+        finally
+        {
+            _fleetBusy = false;
+        }
+    }
+
+    private Task RequestRenameAsync(string name) =>
+        PreviewPanelOperationAsync(PanelSettingsAction.Rename, new JsonObject { ["panelName"] = name });
+
+    private Task RequestPasswordAsync(PanelSettingsPanel.PasswordChangeRequest request) =>
+        PreviewPanelOperationAsync(
+            PanelSettingsAction.ChangePassword,
+            new JsonObject
+            {
+                ["oldPassword"] = request.OldPassword,
+                ["newPassword"] = request.NewPassword,
+            });
+
+    private Task RequestToggleApiAsync(bool enabled) =>
+        PreviewPanelOperationAsync(
+            PanelSettingsAction.ToggleApi,
+            new JsonObject { ["apiInterfaceStatus"] = enabled ? "Enable" : "Disable" });
+
+    private Task RequestToggleTerminalAsync(bool enabled) =>
+        PreviewPanelOperationAsync(
+            PanelSettingsAction.ToggleTerminal,
+            new JsonObject { ["terminalEnabled"] = enabled });
+
+    private async Task PreviewPanelOperationAsync(PanelSettingsAction action, JsonObject parameters)
+    {
+        if (_selectedNodeId is null || !Guid.TryParse(_selectedNodeId, out var nodeId))
+        {
+            return;
+        }
+
+        _operationError = null;
+        _execution = null;
+        _preview = null;
+        _operationBusy = true;
+
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            var invocation = new OperationInvocation(
+                KindFor(action),
+                [new NodeId(nodeId)],
+                parameters);
+
+            _preview = await WriteOperations.PreviewAsync(invocation, actor, Token);
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = "无法预览该操作：" + exception.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "预览操作失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private async Task ConfirmOperationAsync(string? typedConfirmation)
+    {
+        if (_preview is null)
+        {
+            return;
+        }
+
+        _operationBusy = true;
+        _operationError = null;
+
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            _execution = await WriteOperations.ExecuteAsync(_preview.TokenId, typedConfirmation, actor, Token);
+            _preview = null;
+
+            if (_selectedNodeId is { } selected && Guid.TryParse(selected, out var nodeId))
+            {
+                _panelCache.Remove(nodeId);
+                await LoadPanelAsync(nodeId, force: true);
+            }
+
+            if (_execution.Status is OperationStatus.Succeeded or OperationStatus.PartiallySucceeded)
+            {
+                ShowToast("面板设置修改已执行，已重新读取该节点");
+            }
+        }
+        catch (OperationConfirmationException exception)
+        {
+            _operationError = "确认失败：" + exception.Message;
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = "参数校验失败：" + exception.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "执行失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private void CancelOperation()
+    {
+        if (!_operationBusy)
+        {
+            _preview = null;
+        }
+    }
+
+    private static string KindFor(PanelSettingsAction action) => action switch
+    {
+        PanelSettingsAction.Rename => PanelSettingsOperationKinds.Rename,
+        PanelSettingsAction.ChangePassword => PanelSettingsOperationKinds.ChangePassword,
+        PanelSettingsAction.ToggleApi => PanelSettingsOperationKinds.ToggleApi,
+        PanelSettingsAction.ToggleTerminal => PanelSettingsOperationKinds.ToggleTerminal,
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, null),
+    };
+
+    private PanelFleetSettingsModel CreateFleetModel()
+    {
+        var idleTimeoutSeconds = Configuration.GetValue("Terminal:IdleTimeoutSeconds", 1800);
+
+        return new PanelFleetSettingsModel
+        {
+            OverviewRefreshSeconds = Configuration.GetValue("Overview:RefreshIntervalSeconds", 30),
+            ResourceRefreshSeconds = Configuration.GetValue("Resources:RefreshIntervalSeconds", 60),
+            CacheTtlSeconds = Configuration.GetValue("Resources:CacheTtlSeconds", 120),
+            PageSize = 50,
+            ResourceLimit = Configuration.GetValue("Resources:PerNodeLimit", 500),
+            TerminalEnabled = Configuration.GetValue("Terminal:Enabled", true),
+            TerminalSessionTimeoutMinutes = Math.Max(1, idleTimeoutSeconds / 60),
+            AuditRetentionDays = 90,
+            LogLineLimit = 2000,
+            DataDirectory = string.IsNullOrWhiteSpace(Configuration["PanelFleet:DataDirectory"])
+                ? AppContext.BaseDirectory
+                : Configuration["PanelFleet:DataDirectory"],
+            ListenUrl = Configuration["PanelFleet:Listen:Url"],
+            OidcAuthority = Configuration["Oidc:Authority"],
+            OidcClientId = Configuration["Oidc:ClientId"],
+            Version = typeof(SettingsWorkspace).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? typeof(SettingsWorkspace).Assembly.GetName().Version?.ToString(),
+            CurrentTheme = "跟随浏览器",
+        };
+    }
+
+    private Guid? ParseNodeId(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        var uri = Navigation.ToAbsoluteUri(url);
+        if (!QueryHelpers.ParseQuery(uri.Query).TryGetValue("nodeId", out var values))
+        {
+            return null;
+        }
+
+        return Guid.TryParse(values.ToString(), out var nodeId) ? nodeId : null;
+    }
+
+    private void NavigateToNode(string? nodeId)
+    {
+        var target = nodeId is null ? "/settings" : "/settings?nodeId=" + nodeId;
+        if (!string.Equals(Navigation.Uri, Navigation.ToAbsoluteUri(target).ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            Navigation.NavigateTo(target, replace: true);
+        }
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        var nodeId = ParseNodeId(args.Location);
+        var current = Guid.TryParse(_selectedNodeId, out var id) ? id : (Guid?)null;
+        if (nodeId == current)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(async () =>
+        {
+            _selectedNodeId = nodeId?.ToString("D");
+            _section = nodeId is null ? SettingsSection.PanelFleet : SettingsSection.Panel;
+            if (nodeId is { } value)
+            {
+                await LoadPanelAsync(value, force: false);
+            }
+            else
+            {
+                _panel = null;
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    private void ShowToast(string message)
+    {
+        _toast = message;
+
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+        _toastCts = new CancellationTokenSource();
+        _ = HideToastAsync(_toastCts.Token);
+    }
+
+    private async Task HideToastAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+            await InvokeAsync(() =>
+            {
+                _toast = null;
+                StateHasChanged();
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+}

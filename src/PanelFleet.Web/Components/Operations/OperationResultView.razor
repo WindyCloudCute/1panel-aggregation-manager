@@ -1,0 +1,86 @@
+@using PanelFleet.Application.Operations
+
+@if (Execution is not null)
+{
+    <div class="operation-result">
+        <div class="operation-result-header">
+            <span class="badge @StatusClass">@StatusText</span>
+            <strong>@Execution.Title</strong>
+            <span class="muted small">
+                开始 @Execution.StartedAt.ToLocalTime().ToString("HH:mm:ss") · 耗时 @ElapsedText
+            </span>
+        </div>
+
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>节点</th>
+                        <th>结果</th>
+                        <th>信息</th>
+                        <th>任务</th>
+                        <th>耗时</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var step in Execution.Steps)
+                    {
+                        <tr>
+                            <td>@step.NodeName</td>
+                            <td>
+                                <span class="badge @(step.Success ? "badge-ok" : "badge-error")">
+                                    @(step.Success ? "成功" : "失败")
+                                </span>
+                            </td>
+                            <td class="operation-step-detail">
+                                <span class="@(step.Success ? string.Empty : "operation-step-error")">@step.Message</span>
+                                @if (!string.IsNullOrWhiteSpace(step.DetailJson))
+                                {
+                                    <div class="muted small">@step.DetailJson</div>
+                                }
+                            </td>
+                            <td class="muted small">@(string.IsNullOrWhiteSpace(step.TaskId) ? "-" : step.TaskId)</td>
+                            <td class="muted small">@FormatDuration(step.Duration)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (Execution.Status == OperationStatus.PartiallySucceeded)
+        {
+            <p class="muted small">部分节点执行失败，后续节点已停止（不会自动重试/回滚）。</p>
+        }
+        else if (Execution.Status == OperationStatus.Failed)
+        {
+            <p class="operation-step-error">执行失败。可重新预览后重试，或查看审计记录了解详情。</p>
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public OperationExecution? Execution { get; set; }
+
+    private string StatusClass => Execution?.Status switch
+    {
+        OperationStatus.Succeeded => "badge-ok",
+        OperationStatus.PartiallySucceeded => "badge-warn",
+        _ => "badge-error"
+    };
+
+    private string StatusText => Execution?.Status switch
+    {
+        OperationStatus.Succeeded => "执行成功",
+        OperationStatus.Failed => "执行失败",
+        OperationStatus.PartiallySucceeded => "部分成功",
+        _ => "未执行"
+    };
+
+    private string ElapsedText => Execution is null ? "-" : FormatDuration(Execution.FinishedAt - Execution.StartedAt);
+
+    private static string FormatDuration(TimeSpan duration) =>
+        duration.TotalSeconds >= 1
+            ? $"{duration.TotalSeconds:0.0}s"
+            : $"{duration.TotalMilliseconds:0}ms";
+}

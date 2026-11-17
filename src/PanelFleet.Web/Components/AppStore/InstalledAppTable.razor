@@ -1,0 +1,109 @@
+@using PanelFleet.Application.AppStore
+
+@if (Items.Count == 0)
+{
+    <div class="resource-empty">
+        <p>该节点还没有已安装应用。</p>
+        <p class="muted small">可切换到「应用商店」搜索并安装应用，安装完成后刷新此列表。</p>
+    </div>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="table installed-table">
+            <thead>
+                <tr>
+                    <th>名称</th>
+                    <th>应用</th>
+                    <th>版本</th>
+                    <th>状态</th>
+                    <th>端口</th>
+                    <th>容器</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var app in Items)
+                {
+                    <tr class="@(HighlightId == app.Id ? "is-highlight" : null)">
+                        <td>
+                            <div class="installed-name">@app.Name</div>
+                            <div class="muted small">@app.Path</div>
+                        </td>
+                        <td>
+                            <div>@(app.AppName ?? app.AppKey)</div>
+                            <div class="muted small">@app.AppKey</div>
+                        </td>
+                        <td>@app.Version</td>
+                        <td>
+                            <span class="badge @StatusClass(app.Status)">@StatusText(app.Status)</span>
+                            @if (!string.IsNullOrWhiteSpace(app.Message))
+                            {
+                                <div class="installed-message">@app.Message</div>
+                            }
+                        </td>
+                        <td class="muted">@(app.HttpPort is { } port ? port.ToString() : "-")</td>
+                        <td class="muted small">@(app.Container ?? "-")</td>
+                        <td>
+                            <div class="actions">
+                                <button type="button" class="btn" @onclick="() => OnDetail.InvokeAsync(app)" disabled="@Busy">详情</button>
+                                <button type="button" class="btn" @onclick="() => OnEditParams.InvokeAsync(app)" disabled="@Busy">修改配置</button>
+                                <button type="button" class="btn" @onclick="() => OnUpgrade.InvokeAsync(app)" disabled="@Busy">
+                                    升级@(app.CanUpdate ? " ↑" : "")
+                                </button>
+                                <button type="button" class="btn btn-danger" @onclick="() => OnUninstall.InvokeAsync(app)" disabled="@Busy">卸载</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public IReadOnlyList<InstalledAppItem> Items { get; set; } = [];
+
+    /// <summary>从左侧树定位到的已安装应用 Id，命中的行高亮显示。</summary>
+    [Parameter]
+    public long? HighlightId { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<InstalledAppItem> OnDetail { get; set; }
+
+    [Parameter]
+    public EventCallback<InstalledAppItem> OnEditParams { get; set; }
+
+    [Parameter]
+    public EventCallback<InstalledAppItem> OnUpgrade { get; set; }
+
+    [Parameter]
+    public EventCallback<InstalledAppItem> OnUninstall { get; set; }
+
+    private static string StatusClass(string? status) => status switch
+    {
+        "Running" => "badge-ok",
+        "Stopped" => "badge-unknown",
+        "Installing" or "Upgrading" or "Rebuilding" or "Uninstalling" or "Downloading" => "badge-warn",
+        "Error" or "InstallErr" or "DownloadErr" or "UpgradeErr" => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private static string StatusText(string? status) => status switch
+    {
+        "Running" => "运行中",
+        "Stopped" => "已停止",
+        "Installing" => "安装中",
+        "Upgrading" => "升级中",
+        "Rebuilding" => "重建中",
+        "Uninstalling" => "卸载中",
+        "Downloading" => "下载中",
+        "Error" or "InstallErr" or "DownloadErr" or "UpgradeErr" => "异常",
+        null or "" => "未知",
+        _ => status
+    };
+}

@@ -1,0 +1,2071 @@
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Microsoft.JSInterop
+@using PanelFleet.Application.Containers
+@using PanelFleet.Web.Components.Terminal
+@inject IContainerService ContainerService
+@inject INodeService NodeService
+@inject IWriteOperationService WriteOperations
+@inject IActorProvider ActorProvider
+@inject IJSRuntime JS
+
+<div class="page-header">
+    <div class="page-heading">
+        <h1>容器管理</h1>
+        <p class="muted small page-subtitle">按节点浏览容器与 Compose 项目；展开节点时才按需加载，首屏不会拉取全部节点数据。</p>
+    </div>
+    <div class="actions">
+        @if (_containers is not null && _tab == "containers")
+        {
+            <span class="muted small">更新于 @_containers.GeneratedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+        }
+        else if (_compose is not null && _tab == "compose")
+        {
+            <span class="muted small">更新于 @_compose.GeneratedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+        }
+        @if (_loading)
+        {
+            <span class="muted small">加载中…</span>
+        }
+        <button type="button" class="btn tree-toggle" @onclick="OpenTree" aria-expanded="@_treeOpen.ToString().ToLowerInvariant()" aria-label="打开节点树">
+            <ContainerIcon Name="menu" />
+            节点树
+        </button>
+        <button type="button" class="btn btn-primary" @onclick="RefreshAsync" disabled="@_loading">
+            <ContainerIcon Name="refresh" />
+            @(_loading ? "刷新中…" : "刷新")
+        </button>
+    </div>
+</div>
+
+@if (_nodesLoaded && _nodes.Count == 0)
+{
+    <div class="state-card state-card-wide">
+        <div class="state-icon"><ContainerIcon Name="server" Size="30" /></div>
+        <h3>还没有节点</h3>
+        <p class="muted">先到 <a href="/nodes/new">添加节点</a> 接入第一台 1Panel，再管理容器与 Compose 项目。</p>
+        <div class="actions">
+            <a class="btn btn-primary" href="/nodes/new">添加节点</a>
+        </div>
+    </div>
+}
+else
+{
+    <div class="container-workbench">
+        <aside class="container-tree @(_treeOpen ? "is-open" : string.Empty)" aria-label="容器导航">
+            <div class="container-tree-head">
+                <span class="container-tree-title">节点与资源</span>
+                <button type="button" class="btn btn-xs tree-close" @onclick="CloseTree" aria-label="收起节点树">
+                    <ContainerIcon Name="close" />
+                </button>
+            </div>
+
+            @if (!_nodesLoaded)
+            {
+                <div class="pf-tree-skeleton" aria-hidden="true">
+                    @for (var i = 0; i < 7; i++)
+                    {
+                        <div class="pf-skeleton-line @(i % 2 == 0 ? "is-short" : string.Empty)"></div>
+                    }
+                </div>
+            }
+            else if (_nodesError is not null)
+            {
+                <div class="tree-error">
+                    <p class="muted small">@_nodesError</p>
+                    <button type="button" class="btn btn-xs" @onclick="RefreshAsync">重试</button>
+                </div>
+            }
+            else
+            {
+                <NavTree Nodes="TreeNodes"
+                         SelectedId="@_selectedTreeId"
+                         SelectableBranches="true"
+                         Searchable="true"
+                         SearchPlaceholder="搜索节点或容器…"
+                         EmptyText="暂无节点"
+                         AriaLabel="容器导航树"
+                         OnSelect="OnTreeSelectAsync"
+                         OnToggle="OnTreeToggleAsync" />
+            }
+        </aside>
+
+        @if (_treeOpen)
+        {
+            <div class="container-tree-backdrop" @onclick="CloseTree" aria-hidden="true"></div>
+        }
+
+        <section class="container-main">
+            <div class="container-toolbar">
+                <div class="container-tabs" role="tablist">
+                    <button type="button"
+                            class="container-tab @(_tab == "containers" ? "is-active" : string.Empty)"
+                            role="tab"
+                            aria-selected="@(_tab == "containers")"
+                            @onclick="SwitchToContainersAsync">
+                        <ContainerIcon Name="container" />
+                        容器
+                        @if (_containers is not null)
+                        {
+                            <span class="tab-count">@_containers.TotalMatched</span>
+                        }
+                    </button>
+                    <button type="button"
+                            class="container-tab @(_tab == "compose" ? "is-active" : string.Empty)"
+                            role="tab"
+                            aria-selected="@(_tab == "compose")"
+                            @onclick="SwitchToComposeAsync">
+                        <ContainerIcon Name="layers" />
+                        Compose 项目
+                        @if (_compose is not null)
+                        {
+                            <span class="tab-count">@_compose.TotalMatched</span>
+                        }
+                    </button>
+                </div>
+
+                <div class="scope-line">
+                    <span class="scope-chip">
+                        <ContainerIcon Name="server" Size="14" />
+                        <span>@CurrentScopeLabel</span>
+                        @if (NodeFilter is not null)
+                        {
+                            <button type="button" class="scope-clear" @onclick="SelectRootScopeAsync" aria-label="切换到全部节点">
+                                <ContainerIcon Name="close" Size="12" />
+                            </button>
+                        }
+                    </span>
+                </div>
+            </div>
+
+            <div class="resource-toolbar container-filters">
+                @if (_tab == "containers")
+                {
+                    <label class="toolbar-field">
+                        <span class="toolbar-label">状态</span>
+                        <select @bind="_stateFilter" @bind:after="ApplyFiltersAsync" disabled="@_loading">
+                            <option value="all">全部</option>
+                            <option value="running">运行中</option>
+                            <option value="exited">已停止</option>
+                            <option value="paused">已暂停</option>
+                            <option value="created">已创建</option>
+                            <option value="restarting">重启中</option>
+                            <option value="dead">异常</option>
+                        </select>
+                    </label>
+                }
+
+                <label class="toolbar-field">
+                    <span class="toolbar-label">搜索</span>
+                    <input class="search-input"
+                           placeholder="@(_tab == "containers" ? "容器名称…" : "Compose 项目名…")"
+                           @bind="_searchInput"
+                           @bind:event="oninput"
+                           @onkeydown="OnSearchKeyDown" />
+                </label>
+                <button type="button" class="btn" @onclick="ApplyFiltersAsync" disabled="@_loading">
+                    <ContainerIcon Name="search" />
+                    搜索
+                </button>
+                @if (_tab == "compose")
+                {
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="OpenComposeCreateAsync"
+                            disabled="@(_loading || _operationBusy || NodeFilter is null)">
+                        + 新建项目
+                    </button>
+                    @if (NodeFilter is null)
+                    {
+                        <span class="muted small">先在左侧选择节点后可新建项目</span>
+                    }
+                }
+                <span class="muted small">每页 @PageSize 条</span>
+            </div>
+
+            @if (_tab == "containers")
+            {
+                @if (_error is not null)
+                {
+                    <div class="state-card state-card-error">
+                        <div class="state-icon"><ContainerIcon Name="warning" Size="30" /></div>
+                        <h3>容器加载失败</h3>
+                        <p class="muted">@_error</p>
+                        <div class="actions">
+                            <button type="button" class="btn btn-primary" @onclick="RefreshAsync">重试</button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    @if (_containers is not null)
+                    {
+                        @NodeResultStrip(_containers.Nodes, _containers.GeneratedAt)
+                    }
+
+                    <div class="batch-bar">
+                        <span class="batch-count">已选 @_selected.Count 个容器</span>
+                        <label class="toolbar-field">
+                            <span class="toolbar-label">批量操作</span>
+                            <select @bind="_batchOperation" disabled="@(_selected.Count == 0 || _operationBusy)">
+                                <option value="container.start">启动</option>
+                                <option value="container.stop">停止</option>
+                                <option value="container.restart">重启</option>
+                                <option value="container.pause">暂停</option>
+                                <option value="container.unpause">恢复</option>
+                                <option value="container.delete">删除</option>
+                            </select>
+                        </label>
+                        <button type="button"
+                                class="btn btn-danger"
+                                disabled="@(_selected.Count == 0 || _operationBusy)"
+                                @onclick="RunBatchOperationAsync">
+                            执行批量操作（@_selected.Count）
+                        </button>
+                        <button type="button" class="btn" disabled="@(_selected.Count == 0)" @onclick="ClearSelection">清空选择</button>
+                        <span class="muted small">批量按节点顺序执行，失败即停止；批量需要输入确认文本。</span>
+                    </div>
+
+                    @if (_containers is null)
+                    {
+                        <div class="pf-skeleton-table" aria-hidden="true">
+                            @for (var i = 0; i < 6; i++)
+                            {
+                                <div class="pf-skeleton-row">
+                                    <span class="pf-skeleton-cell"></span>
+                                    <span class="pf-skeleton-cell"></span>
+                                    <span class="pf-skeleton-cell"></span>
+                                    <span class="pf-skeleton-cell is-short"></span>
+                                    <span class="pf-skeleton-cell"></span>
+                                    <span class="pf-skeleton-cell"></span>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else if (_containers.Rows.Count == 0)
+                    {
+                        <div class="state-card">
+                            <div class="state-icon"><ContainerIcon Name="container" Size="30" /></div>
+                            <h3>暂无容器</h3>
+                            <p class="muted">当前筛选条件下没有容器。可以调整节点、状态或搜索关键字，或刷新重新采集。</p>
+                            <div class="actions">
+                                <button type="button" class="btn" @onclick="ResetFiltersAsync">清空筛选</button>
+                                <button type="button" class="btn btn-primary" @onclick="RefreshAsync">
+                                    <ContainerIcon Name="refresh" />
+                                    刷新
+                                </button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <ContainerTable Rows="_containers.Rows"
+                                        SelectedKeys="_selected"
+                                        ActiveKey="@_activeRowKey"
+                                        OnSelect="OnSelectAsync"
+                                        OnSelectAll="OnSelectAllAsync"
+                                        OnDetail="OpenDetailAsync"
+                                        OnLogs="OpenLogsAsync"
+                                        OnTerminal="OpenTerminalAsync"
+                                        OnOperate="OnOperateAsync" />
+
+                        <div class="resource-pagination">
+                            <span class="muted small">共 @_containers.TotalMatched 条 · 第 @_containers.Page/@Math.Max(_containers.TotalPages, 1) 页</span>
+                            <div class="actions">
+                                <button type="button" class="btn" @onclick="PreviousPageAsync" disabled="@(_loading || _page <= 1)">上一页</button>
+                                <button type="button" class="btn" @onclick="NextPageAsync" disabled="@(_loading || _containers is null || _page >= Math.Max(_containers.TotalPages, 1))">下一页</button>
+                            </div>
+                        </div>
+                    }
+                }
+            }
+            else
+            {
+                @if (_composeError is not null)
+                {
+                    <div class="state-card state-card-error">
+                        <div class="state-icon"><ContainerIcon Name="warning" Size="30" /></div>
+                        <h3>Compose 项目加载失败</h3>
+                        <p class="muted">@_composeError</p>
+                        <div class="actions">
+                            <button type="button" class="btn btn-primary" @onclick="RefreshAsync">重试</button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    @if (_compose is not null)
+                    {
+                        @NodeResultStrip(_compose.Nodes, _compose.GeneratedAt)
+                    }
+
+                    @if (_compose is null)
+                    {
+                        <div class="pf-skeleton-table" aria-hidden="true">
+                            @for (var i = 0; i < 4; i++)
+                            {
+                                <div class="pf-skeleton-row is-compose">
+                                    <span class="pf-skeleton-cell"></span>
+                                    <span class="pf-skeleton-cell is-short"></span>
+                                    <span class="pf-skeleton-cell"></span>
+                                    <span class="pf-skeleton-cell"></span>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else if (_compose.Projects.Count == 0)
+                    {
+                        <div class="state-card">
+                            <div class="state-icon"><ContainerIcon Name="layers" Size="30" /></div>
+                            <h3>暂无 Compose 项目</h3>
+                            <p class="muted">当前筛选条件下没有 Compose 项目。可以调整节点或搜索关键字，或刷新重新采集。</p>
+                            <div class="actions">
+                                <button type="button" class="btn" @onclick="ResetFiltersAsync">清空筛选</button>
+                                <button type="button" class="btn btn-primary" @onclick="RefreshAsync">
+                                    <ContainerIcon Name="refresh" />
+                                    刷新
+                                </button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <ComposeProjectTable Rows="_compose.Projects"
+                                             ActiveKey="@_activeComposeKey"
+                                             OnOperate="OnComposeOperateAsync"
+                                             OnEdit="OpenComposeEditAsync"
+                                             OnDelete="OpenComposeDeleteAsync" />
+                    }
+                }
+            }
+        </section>
+    </div>
+}
+
+@if (_operationError is not null)
+{
+    <div class="alert alert-error operation-error">
+        <span>@_operationError</span>
+        <button type="button" class="btn btn-xs" @onclick="DismissOperationError">关闭</button>
+    </div>
+}
+
+@if (_execution is not null)
+{
+    <div class="card operation-panel">
+        <OperationResultView Execution="_execution" />
+        <div class="actions">
+            <button type="button" class="btn" @onclick="DismissExecution">关闭结果</button>
+        </div>
+    </div>
+}
+
+@* 浮层均为 position:fixed；全局 .page-enter 只做 opacity 动画、不创建 containing block，
+   因此遮罩/抽屉始终相对视口定位（根因修复见 wwwroot/app.css 的 page-fade 注释）。 *@
+<OperationConfirmDialog Preview="_preview" Busy="_operationBusy" OnConfirm="ConfirmOperationAsync" OnCancel="CancelOperation" />
+
+@if (_detailRow is not null)
+{
+    <ContainerDetailDrawer Row="_detailRow"
+                           Detail="_detail"
+                           Loading="_detailLoading"
+                           Error="@_detailError"
+                           PanelUrl="@_detailPanelUrl"
+                           OnRetry="LoadDetailAsync"
+                           OnLogs="OpenLogsAsync"
+                           OnTerminal="OpenTerminalAsync"
+                           OnClose="CloseDetailAsync" />
+}
+
+@if (_logRow is not null)
+{
+    <ContainerLogPanel Row="_logRow"
+                       Log="_log"
+                       Loading="_logLoading"
+                       Error="@_logError"
+                       Tail="_logTail"
+                       Since="@_logSince"
+                       Timestamp="_logTimestamp"
+                       Follow="_logFollow"
+                       Live="_logLive"
+                       Fullscreen="_logFullscreen"
+                       OnRefresh="LoadLogsAsync"
+                       OnToggleFollow="ToggleLogFollow"
+                       OnToggleLive="ToggleLogLive"
+                       OnToggleFullscreen="ToggleLogFullscreen"
+                       OnClose="CloseLogs" />
+}
+
+<TerminalDrawer NodeId="@_terminalNodeId"
+                ContainerName="@_terminalContainer"
+                Visible="@(_terminalNodeId is not null)"
+                OnClose="@CloseTerminal" />
+
+@if (_composeEditorOpen)
+{
+    var editorNodeId = _composeEditorRow?.NodeId ?? NodeFilter;
+    <ComposeEditorDialog Project="_composeEditorRow"
+                         NodeName="@(editorNodeId is { } editorId ? ComposeDialogNodeName(editorId) : null)"
+                         Busy="_operationBusy"
+                         OnSubmit="SubmitComposeEditorAsync"
+                         OnCancel="CloseComposeEditor" />
+}
+
+@if (_composeDeleteRow is not null)
+{
+    <ComposeDeleteDialog Project="_composeDeleteRow"
+                         NodeName="@ComposeDialogNodeName(_composeDeleteRow.NodeId)"
+                         Busy="_operationBusy"
+                         OnSubmit="SubmitComposeDeleteAsync"
+                         OnCancel="CloseComposeDelete" />
+}
+
+@code {
+    private const int PageSize = 50;
+    private const int TreePageSize = 200;
+    private const string RootTreeId = "root";
+    private const string StorageKey = "pf.tree.containers";
+
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private bool _nodesLoaded;
+    private string? _nodesError;
+    private string _nodeFilterValue = string.Empty;
+
+    private string _tab = "containers";
+    private string _stateFilter = "all";
+    private string? _searchInput;
+    private string? _nameFilter;
+    private int _page = 1;
+    private bool _loading;
+    private string? _error;
+    private string? _composeError;
+
+    private ContainerListResult? _containers;
+    private ComposeListResult? _compose;
+
+    private readonly HashSet<string> _selected = new(StringComparer.Ordinal);
+    private string _batchOperation = "container.start";
+
+    private OperationPreview? _preview;
+    private OperationExecution? _execution;
+    private bool _operationBusy;
+    private string? _operationError;
+
+    private ContainerRow? _detailRow;
+    private ContainerDetail? _detail;
+    private bool _detailLoading;
+    private string? _detailError;
+    private string? _detailPanelUrl;
+
+    private ContainerRow? _logRow;
+    private ContainerLogView? _log;
+    private bool _logLoading;
+    private string? _logError;
+    private int _logTail = 200;
+    private string _logSince = "all";
+    private bool _logTimestamp;
+
+    // 日志浮层交互状态：全屏、实时跟踪（保持到底部）、实时刷新（2 秒轮询）。
+    private bool _logFullscreen;
+    private bool _logFollow;
+    private bool _logLive;
+    private bool _logRequestInFlight;
+    private CancellationTokenSource? _logLiveCts;
+
+    // 终端抽屉目标；为 null 表示抽屉关闭。
+    private Guid? _terminalNodeId;
+    private string? _terminalContainer;
+
+    // Compose 新建/编辑与删除对话框状态（真正执行仍走预览 + OperationConfirmDialog）。
+    private bool _composeEditorOpen;
+    private ComposeProjectRow? _composeEditorRow;
+    private ComposeProjectRow? _composeDeleteRow;
+
+    private CancellationTokenSource? _cts;
+
+    private bool _initialized;
+    private bool _interactive;
+    private Guid? _appliedRouteNodeId;
+    private string? _appliedRouteContainer;
+
+    private bool _treeOpen;
+    private string? _selectedTreeId = RootTreeId;
+    private readonly HashSet<string> _expandRequest = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _treeLoading = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _treeErrors = new(StringComparer.Ordinal);
+    private readonly Dictionary<Guid, IReadOnlyList<NavTreeNode>> _nodeContainers = new();
+    private readonly HashSet<Guid> _nodeContainersLoaded = new();
+    private readonly Dictionary<Guid, IReadOnlyList<NavTreeNode>> _nodeCompose = new();
+    private readonly HashSet<Guid> _nodeComposeLoaded = new();
+
+    private string? _activeRowKey;
+    private string? _activeComposeKey;
+    private string? _urlSelectionName;
+
+    [Parameter, EditorRequired]
+    public Guid? NodeId { get; set; }
+
+    [Parameter]
+    public string? Container { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cts = new CancellationTokenSource();
+        _expandRequest.Add(RootTreeId);
+        await LoadNodesAsync();
+
+        if (NodeId is { } routeNodeId && _nodes.Any(node => node.Id.Value == routeNodeId))
+        {
+            _nodeFilterValue = routeNodeId.ToString();
+            _selectedTreeId = NodeKey(routeNodeId);
+            _expandRequest.Add(NodeKey(routeNodeId));
+        }
+
+        _initialized = true;
+        _appliedRouteNodeId = NodeId;
+        _appliedRouteContainer = Container;
+
+        if (_nodesLoaded && _nodes.Count > 0)
+        {
+            await LoadAsync();
+            if (!string.IsNullOrWhiteSpace(Container))
+            {
+                await LocateContainerAsync(Container.Trim());
+            }
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_initialized)
+        {
+            return;
+        }
+
+        if (NodeId == _appliedRouteNodeId &&
+            string.Equals(Container, _appliedRouteContainer, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _appliedRouteNodeId = NodeId;
+        _appliedRouteContainer = Container;
+
+        if (NodeId is { } nodeId && _nodes.Any(node => node.Id.Value == nodeId))
+        {
+            _nodeFilterValue = nodeId.ToString();
+            _selectedTreeId = NodeKey(nodeId);
+            _expandRequest.Add(NodeKey(nodeId));
+            await EnsureNodeContainersAsync(nodeId);
+        }
+        else
+        {
+            _nodeFilterValue = string.Empty;
+            _selectedTreeId = RootTreeId;
+            _expandRequest.Add(RootTreeId);
+        }
+
+        _page = 1;
+        _activeRowKey = null;
+        _activeComposeKey = null;
+        _urlSelectionName = null;
+        await LoadAsync();
+
+        if (!string.IsNullOrWhiteSpace(Container))
+        {
+            await LocateContainerAsync(Container.Trim());
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_expandRequest.Count > 0)
+        {
+            _expandRequest.Clear();
+        }
+
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _interactive = RendererInfo.IsInteractive;
+        if (_interactive)
+        {
+            var changed = await RestoreSelectionAsync();
+            if (changed)
+            {
+                StateHasChanged();
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        StopLogPolling();
+        _cts?.Dispose();
+    }
+
+    private CancellationToken Token => _cts?.Token ?? CancellationToken.None;
+
+    private Guid? NodeFilter => Guid.TryParse(_nodeFilterValue, out var id) ? id : null;
+
+    private string CurrentScopeLabel
+    {
+        get
+        {
+            if (NodeFilter is not { } nodeId)
+            {
+                return "全部节点";
+            }
+
+            return _nodes.FirstOrDefault(node => node.Id.Value == nodeId)?.Name ?? "已选节点";
+        }
+    }
+
+    private async Task LoadNodesAsync()
+    {
+        _nodesError = null;
+        try
+        {
+            _nodes = await NodeService.ListAsync(Token);
+            _nodesLoaded = true;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _nodes = [];
+            _nodesLoaded = false;
+            _nodesError = "节点列表加载失败：" + exception.Message;
+            _error = _nodesError;
+            _composeError = _nodesError;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_tab == "containers")
+        {
+            await LoadContainersAsync();
+        }
+        else
+        {
+            await LoadComposeAsync();
+        }
+    }
+
+    private async Task LoadContainersAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _containers = await ContainerService.ListAsync(BuildQuery(), Token);
+            PruneSelection(_containers.Rows);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ContainerNodeNotFoundException exception)
+        {
+            _error = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _error = "加载容器失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadComposeAsync()
+    {
+        _loading = true;
+        _composeError = null;
+        try
+        {
+            _compose = await ContainerService.ListComposeAsync(BuildQuery(), Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ContainerNodeNotFoundException exception)
+        {
+            _composeError = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _composeError = "加载 Compose 项目失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private ContainerQuery BuildQuery() =>
+        new(NodeFilter, string.IsNullOrWhiteSpace(_nameFilter) ? null : _nameFilter, _stateFilter, "name", "ascending", _page, PageSize);
+
+    private async Task RefreshAsync()
+    {
+        _selected.Clear();
+        _activeRowKey = null;
+        _activeComposeKey = null;
+        _urlSelectionName = null;
+        _nodeContainers.Clear();
+        _nodeContainersLoaded.Clear();
+        _nodeCompose.Clear();
+        _nodeComposeLoaded.Clear();
+        _treeErrors.Clear();
+        _error = null;
+        _composeError = null;
+
+        await LoadNodesAsync();
+        if (NodeFilter is { } nodeId)
+        {
+            await EnsureNodeContainersAsync(nodeId);
+            await EnsureNodeComposeAsync(nodeId);
+        }
+
+        await LoadAsync();
+        await SyncUrlAsync();
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        if (_tab == tab)
+        {
+            return;
+        }
+
+        _tab = tab;
+        _page = 1;
+        _preview = null;
+        _urlSelectionName = null;
+        _treeOpen = false;
+        if (tab == "compose")
+        {
+            await LoadComposeAsync();
+        }
+        else
+        {
+            await LoadContainersAsync();
+        }
+
+        await PersistSelectionAsync();
+        await SyncUrlAsync();
+    }
+
+    private Task SwitchToContainersAsync() => SwitchTabAsync("containers");
+
+    private Task SwitchToComposeAsync() => SwitchTabAsync("compose");
+
+    private async Task ApplyFiltersAsync()
+    {
+        _page = 1;
+        _nameFilter = string.IsNullOrWhiteSpace(_searchInput) ? null : _searchInput.Trim();
+        await LoadAsync();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _stateFilter = "all";
+        _searchInput = null;
+        _nameFilter = null;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await ApplyFiltersAsync();
+        }
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_page <= 1)
+        {
+            return;
+        }
+
+        _page--;
+        await LoadContainersAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (_containers is null || _page >= Math.Max(_containers.TotalPages, 1))
+        {
+            return;
+        }
+
+        _page++;
+        await LoadContainersAsync();
+    }
+
+    private Task OnSelectAsync((ContainerRow Row, bool Selected) args)
+    {
+        var key = ContainerTable.Key(args.Row);
+        if (args.Selected)
+        {
+            _selected.Add(key);
+        }
+        else
+        {
+            _selected.Remove(key);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task OnSelectAllAsync(bool selectAll)
+    {
+        if (_containers is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (selectAll)
+        {
+            foreach (var row in _containers.Rows)
+            {
+                _selected.Add(ContainerTable.Key(row));
+            }
+        }
+        else
+        {
+            _selected.Clear();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void ClearSelection() => _selected.Clear();
+
+    private void PruneSelection(IReadOnlyList<ContainerRow> rows)
+    {
+        if (_selected.Count == 0)
+        {
+            return;
+        }
+
+        var keys = rows.Select(ContainerTable.Key).ToHashSet(StringComparer.Ordinal);
+        _selected.RemoveWhere(key => !keys.Contains(key));
+    }
+
+    private Task OnOperateAsync((ContainerRow Row, string Kind) args) =>
+        PreviewOperationAsync(args.Kind, [args.Row], args.Row.Source);
+
+    private async Task RunBatchOperationAsync()
+    {
+        if (_containers is null || _selected.Count == 0)
+        {
+            return;
+        }
+
+        var targets = _containers.Rows
+            .Where(row => _selected.Contains(ContainerTable.Key(row)))
+            .ToArray();
+        await PreviewOperationAsync(_batchOperation, targets, "批量");
+    }
+
+    private async Task OnComposeOperateAsync((ComposeProjectRow Row, string Kind) args)
+    {
+        var parameters = new JsonObject
+        {
+            ["compose"] = args.Row.Name,
+            ["path"] = args.Row.Path,
+            ["source"] = "Compose"
+        };
+
+        var invocation = new OperationInvocation(
+            args.Kind,
+            [new NodeId(args.Row.NodeId)],
+            parameters);
+        await PreviewAsync(invocation);
+    }
+
+    private Task OpenComposeCreateAsync()
+    {
+        if (NodeFilter is null)
+        {
+            _composeError = "请先在左侧选择具体节点，再新建 Compose 项目。";
+            return Task.CompletedTask;
+        }
+
+        _composeEditorRow = null;
+        _composeEditorOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private Task OpenComposeEditAsync(ComposeProjectRow row)
+    {
+        _composeEditorRow = row;
+        _composeEditorOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private void CloseComposeEditor()
+    {
+        _composeEditorOpen = false;
+        _composeEditorRow = null;
+    }
+
+    private Task OpenComposeDeleteAsync(ComposeProjectRow row)
+    {
+        _composeDeleteRow = row;
+        return Task.CompletedTask;
+    }
+
+    private void CloseComposeDelete() => _composeDeleteRow = null;
+
+    private string? ComposeDialogNodeName(Guid nodeId) =>
+        _nodes.FirstOrDefault(node => node.Id.Value == nodeId)?.Name;
+
+    private async Task SubmitComposeEditorAsync(ComposeEditorDialog.ComposeEditorResult result)
+    {
+        var editing = _composeEditorRow;
+        CloseComposeEditor();
+
+        var parameters = new JsonObject
+        {
+            ["compose"] = result.Name,
+            ["content"] = result.Content,
+            ["source"] = "Compose",
+            ["forcePull"] = result.ForcePull
+        };
+        if (!string.IsNullOrWhiteSpace(result.Env))
+        {
+            parameters["env"] = result.Env;
+        }
+
+        string kind;
+        Guid nodeId;
+        if (editing is null)
+        {
+            kind = "compose.create";
+            nodeId = NodeFilter!.Value;
+        }
+        else
+        {
+            kind = "compose.update";
+            nodeId = editing.NodeId;
+            parameters["path"] = string.IsNullOrWhiteSpace(editing.Workdir) ? editing.Path : editing.Workdir;
+            if (!string.IsNullOrWhiteSpace(editing.ConfigFile))
+            {
+                parameters["detailPath"] = editing.ConfigFile;
+            }
+        }
+
+        await PreviewAsync(new OperationInvocation(kind, [new NodeId(nodeId)], parameters));
+    }
+
+    private async Task SubmitComposeDeleteAsync(ComposeDeleteDialog.ComposeDeleteResult result)
+    {
+        var row = _composeDeleteRow;
+        _composeDeleteRow = null;
+        if (row is null)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject
+        {
+            ["compose"] = result.Name,
+            ["path"] = result.Path,
+            ["withFile"] = result.WithFile,
+            ["force"] = result.Force,
+            ["source"] = "Compose"
+        };
+
+        await PreviewAsync(new OperationInvocation("compose.delete", [new NodeId(row.NodeId)], parameters));
+    }
+
+    private async Task PreviewOperationAsync(string kind, IReadOnlyList<ContainerRow> targets, string source)
+    {
+        if (targets.Count == 0)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject();
+        if (targets.Count == 1)
+        {
+            parameters["container"] = targets[0].Name;
+        }
+        else
+        {
+            var byNode = new JsonObject();
+            foreach (var group in targets.GroupBy(row => row.NodeId))
+            {
+                var names = new JsonArray();
+                foreach (var row in group)
+                {
+                    names.Add(row.Name);
+                }
+
+                byNode[group.Key.ToString("N")] = names;
+            }
+
+            parameters["containersByNode"] = byNode;
+        }
+
+        parameters["source"] = source;
+
+        var invocation = new OperationInvocation(
+            kind,
+            targets.Select(row => new NodeId(row.NodeId)).Distinct().ToArray(),
+            parameters);
+        await PreviewAsync(invocation);
+    }
+
+    private async Task PreviewAsync(OperationInvocation invocation)
+    {
+        _operationError = null;
+        _execution = null;
+        _operationBusy = true;
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            _preview = await WriteOperations.PreviewAsync(invocation, actor, Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "预览操作失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private async Task ConfirmOperationAsync(string? typedConfirmation)
+    {
+        if (_preview is null)
+        {
+            return;
+        }
+
+        _operationBusy = true;
+        _operationError = null;
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            _execution = await WriteOperations.ExecuteAsync(_preview.TokenId, typedConfirmation, actor, Token);
+            _preview = null;
+            _selected.Clear();
+            _nodeContainers.Clear();
+            _nodeContainersLoaded.Clear();
+            _nodeCompose.Clear();
+            _nodeComposeLoaded.Clear();
+            _treeErrors.Clear();
+            if (NodeFilter is { } nodeId)
+            {
+                await EnsureNodeContainersAsync(nodeId);
+            }
+
+            await LoadAsync();
+        }
+        catch (OperationConfirmationException exception)
+        {
+            _operationError = "确认失败：" + exception.Message;
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = "参数校验失败：" + exception.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "执行失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private void CancelOperation() => _preview = null;
+
+    private void DismissExecution() => _execution = null;
+
+    private void DismissOperationError() => _operationError = null;
+
+    private async Task OpenDetailAsync(ContainerRow row)
+    {
+        _detailRow = row;
+        _detail = null;
+        _detailError = null;
+        _detailLoading = true;
+        _detailPanelUrl = BuildPanelUrl(row.NodeId, "containers");
+        _activeRowKey = ContainerTable.Key(row);
+        _urlSelectionName = row.Name;
+        await SyncUrlAsync();
+
+        try
+        {
+            _detail = await ContainerService.GetDetailAsync(row.NodeId, row.Name, Token);
+            if (_detail.Error is { } error)
+            {
+                _detailError = "详情加载失败：" + error.Message;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _detailError = "详情加载失败：" + exception.Message;
+        }
+        finally
+        {
+            _detailLoading = false;
+        }
+    }
+
+    private async Task LoadDetailAsync()
+    {
+        if (_detailRow is { } row)
+        {
+            await OpenDetailAsync(row);
+        }
+    }
+
+    private async Task CloseDetailAsync()
+    {
+        _detailRow = null;
+        _detail = null;
+        _detailError = null;
+        _activeRowKey = null;
+        _urlSelectionName = null;
+        await SyncUrlAsync();
+    }
+
+    private async Task OpenLogsAsync(ContainerRow row)
+    {
+        StopLogPolling();
+        _logRow = row;
+        _log = null;
+        _logError = null;
+        _logTail = 200;
+        _logSince = "all";
+        _logTimestamp = false;
+        _logFullscreen = false;
+        _logFollow = false;
+        _logLive = false;
+        await LoadLogsAsync((_logSince, _logTail, _logTimestamp));
+    }
+
+    private async Task LoadLogsAsync((string Since, int Tail, bool Timestamp) options)
+    {
+        if (_logRow is not { } row || _logRequestInFlight)
+        {
+            return;
+        }
+
+        _logSince = options.Since;
+        _logTail = options.Tail;
+        _logTimestamp = options.Timestamp;
+        _logRequestInFlight = true;
+        _logLoading = true;
+        _logError = null;
+        try
+        {
+            var log = await ContainerService.GetLogsAsync(
+                row.NodeId,
+                new ContainerLogRequest(row.Name, options.Since, options.Tail, options.Timestamp),
+                Token);
+            _log = log;
+            if (log.Error is { } error)
+            {
+                _logError = "日志读取失败：" + error.Message;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _logError = "日志读取失败：" + exception.Message;
+        }
+        finally
+        {
+            _logRequestInFlight = false;
+            _logLoading = false;
+        }
+    }
+
+    private Task ToggleLogFollow(bool follow)
+    {
+        _logFollow = follow;
+        return Task.CompletedTask;
+    }
+
+    private Task ToggleLogFullscreen(bool fullscreen)
+    {
+        _logFullscreen = fullscreen;
+        return Task.CompletedTask;
+    }
+
+    private Task ToggleLogLive(bool live)
+    {
+        if (live)
+        {
+            StartLogPolling();
+        }
+        else
+        {
+            StopLogPolling();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void StartLogPolling()
+    {
+        if (_logRow is null || _logLive)
+        {
+            return;
+        }
+
+        _logLive = true;
+        _logLiveCts?.Cancel();
+        _logLiveCts?.Dispose();
+        _logLiveCts = CancellationTokenSource.CreateLinkedTokenSource(Token);
+        _ = PollLogsAsync(_logLiveCts.Token);
+    }
+
+    private void StopLogPolling()
+    {
+        _logLive = false;
+        if (_logLiveCts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _logLiveCts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        _logLiveCts.Dispose();
+        _logLiveCts = null;
+    }
+
+    /// <summary>每 2 秒拉取一次日志；请求在途时跳过，避免并发重叠。</summary>
+    private async Task PollLogsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                if (_logRow is null || _logRequestInFlight || !_logLive)
+                {
+                    continue;
+                }
+
+                await InvokeAsync(() => RefreshLogsLiveAsync(cancellationToken));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private async Task RefreshLogsLiveAsync(CancellationToken cancellationToken)
+    {
+        if (_logRow is not { } row || _logRequestInFlight)
+        {
+            return;
+        }
+
+        _logRequestInFlight = true;
+        try
+        {
+            var log = await ContainerService.GetLogsAsync(
+                row.NodeId,
+                new ContainerLogRequest(row.Name, _logSince, _logTail, _logTimestamp),
+                cancellationToken);
+            _log = log;
+            if (log.Error is { } error)
+            {
+                _logError = "日志读取失败：" + error.Message;
+                StopLogPolling();
+            }
+            else
+            {
+                _logError = null;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _logError = "日志读取失败：" + exception.Message;
+            StopLogPolling();
+        }
+        finally
+        {
+            _logRequestInFlight = false;
+        }
+
+        StateHasChanged();
+    }
+
+    private void CloseLogs()
+    {
+        StopLogPolling();
+        _logRow = null;
+        _log = null;
+        _logError = null;
+        _logFullscreen = false;
+        _logFollow = false;
+        _logLive = false;
+    }
+
+    private Task OpenTerminalAsync(ContainerRow row)
+    {
+        _terminalNodeId = row.NodeId;
+        _terminalContainer = row.Name;
+        return Task.CompletedTask;
+    }
+
+    private void CloseTerminal()
+    {
+        _terminalNodeId = null;
+        _terminalContainer = null;
+    }
+
+    private string? BuildPanelUrl(Guid nodeId, string section)
+    {
+        var node = _nodes.FirstOrDefault(item => item.Id.Value == nodeId);
+        if (node is null)
+        {
+            return null;
+        }
+
+        var root = node.BaseUrl.AbsoluteUri.TrimEnd('/');
+        var entrance = string.IsNullOrWhiteSpace(node.SecurityEntrance)
+            ? string.Empty
+            : "/" + node.SecurityEntrance.Trim('/');
+        return root + entrance + "/" + section;
+    }
+
+    // ---------- 左树 ----------
+
+    private void OpenTree() => _treeOpen = true;
+
+    private void CloseTree() => _treeOpen = false;
+
+    private IReadOnlyList<NavTreeNode> TreeNodes
+    {
+        get
+        {
+            var nodeItems = new List<NavTreeNode>(_nodes.Count);
+            foreach (var node in _nodes)
+            {
+                nodeItems.Add(BuildNodeTreeNode(node));
+            }
+
+            var online = _nodes.Count(node => node.Health == NodeHealth.Online);
+            var badgeClass = online == _nodes.Count && _nodes.Count > 0
+                ? "badge-ok"
+                : online > 0
+                    ? "badge-warn"
+                    : "badge-error";
+
+            return
+            [
+                new NavTreeNode
+                {
+                    Id = RootTreeId,
+                    Label = "全部节点",
+                    Hint = "共 " + _nodes.Count + " 个节点",
+                    BadgeText = online + " 在线",
+                    BadgeClass = badgeClass,
+                    Kind = NavTreeNodeKind.Branch,
+                    ChildrenLoaded = true,
+                    DefaultExpanded = _expandRequest.Contains(RootTreeId),
+                    Children = nodeItems
+                }
+            ];
+        }
+    }
+
+    private NavTreeNode BuildNodeTreeNode(NodeSummary node)
+    {
+        var nodeId = node.Id.Value;
+        var key = NodeKey(nodeId);
+        var containersLoaded = _nodeContainersLoaded.Contains(nodeId);
+        var composeLoaded = _nodeComposeLoaded.Contains(nodeId);
+        var containerLeaves = _nodeContainers.TryGetValue(nodeId, out var mappedContainers) ? mappedContainers : [];
+        var composeLeaves = _nodeCompose.TryGetValue(nodeId, out var mappedCompose) ? mappedCompose : [];
+        var containerGroupId = key + ":containers";
+        var composeGroupId = key + ":compose";
+
+        var groups = new List<NavTreeNode>(2)
+        {
+            new()
+            {
+                Id = containerGroupId,
+                Label = "容器",
+                Hint = containersLoaded ? containerLeaves.Count + " 个" : "展开以加载",
+                Kind = NavTreeNodeKind.Branch,
+                ChildrenLoaded = containersLoaded,
+                IsLoading = _treeLoading.Contains(containerGroupId),
+                Error = ErrorFor(containerGroupId),
+                DefaultExpanded = _expandRequest.Contains(containerGroupId),
+                Children = containerLeaves
+            },
+            new()
+            {
+                Id = composeGroupId,
+                Label = "Compose 项目",
+                Hint = composeLoaded ? composeLeaves.Count + " 个" : "展开以加载",
+                Kind = NavTreeNodeKind.Branch,
+                ChildrenLoaded = composeLoaded,
+                IsLoading = _treeLoading.Contains(composeGroupId),
+                Error = ErrorFor(composeGroupId),
+                DefaultExpanded = _expandRequest.Contains(composeGroupId),
+                Children = composeLeaves
+            }
+        };
+
+        return new NavTreeNode
+        {
+            Id = key,
+            Label = node.Name,
+            Hint = BuildNodeHint(node),
+            BadgeText = HealthText(node.Health),
+            BadgeClass = HealthClass(node.Health),
+            Kind = NavTreeNodeKind.Branch,
+            IsDisabled = !node.IsEnabled,
+            IsLoading = _treeLoading.Contains(key),
+            Error = ErrorFor(key),
+            ChildrenLoaded = containersLoaded,
+            DefaultExpanded = _expandRequest.Contains(key),
+            Children = groups
+        };
+    }
+
+    private static string BuildNodeHint(NodeSummary node)
+    {
+        var parts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(node.PanelVersion))
+        {
+            parts.Add("v" + node.PanelVersion);
+        }
+
+        if (!string.IsNullOrWhiteSpace(node.HealthMessage))
+        {
+            parts.Add(node.HealthMessage);
+        }
+
+        if (parts.Count == 0)
+        {
+            parts.Add(node.BaseUrl.Authority);
+        }
+
+        if (!node.IsEnabled)
+        {
+            parts.Add("已停用");
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string HealthText(NodeHealth health) => health switch
+    {
+        NodeHealth.Online => "在线",
+        NodeHealth.Degraded => "降级",
+        NodeHealth.Offline => "离线",
+        _ => "未知"
+    };
+
+    private static string HealthClass(NodeHealth health) => health switch
+    {
+        NodeHealth.Online => "badge-ok",
+        NodeHealth.Degraded => "badge-warn",
+        NodeHealth.Offline => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private static NavTreeNode BuildContainerLeaf(ContainerRow row) => new()
+    {
+        Id = ContainerLeafId(row.NodeId, row.Name),
+        Label = row.Name,
+        Hint = string.IsNullOrWhiteSpace(row.RunTime) ? row.Image : row.RunTime,
+        BadgeText = ContainerStateText(row.State),
+        BadgeClass = ContainerStateClass(row.State),
+        Kind = NavTreeNodeKind.Leaf
+    };
+
+    private static NavTreeNode BuildComposeLeaf(ComposeProjectRow project) => new()
+    {
+        Id = ComposeLeafId(project.NodeId, project.Name),
+        Label = project.Name,
+        Hint = project.Path,
+        BadgeText = project.RunningCount + "/" + project.ContainerCount,
+        BadgeClass = ComposeStateClass(project),
+        Kind = NavTreeNodeKind.Leaf
+    };
+
+    private static string ContainerStateText(string? state) => ContainerStates.Normalize(state) switch
+    {
+        "running" => "运行中",
+        "exited" => "已停止",
+        "paused" => "已暂停",
+        "restarting" => "重启中",
+        "created" => "已创建",
+        "dead" => "异常",
+        "removing" => "删除中",
+        _ => string.IsNullOrWhiteSpace(state) ? "未知" : state
+    };
+
+    private static string ContainerStateClass(string? state) => ContainerStates.Normalize(state) switch
+    {
+        "running" => "badge-ok",
+        "paused" or "restarting" => "badge-warn",
+        "dead" or "removing" => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private static string ComposeStateClass(ComposeProjectRow project) =>
+        project.ContainerCount == 0
+            ? "badge-unknown"
+            : project.RunningCount == project.ContainerCount
+                ? "badge-ok"
+                : project.RunningCount > 0
+                    ? "badge-warn"
+                    : "badge-unknown";
+
+    private string? ErrorFor(string id) => _treeErrors.TryGetValue(id, out var message) ? message : null;
+
+    private async Task OnTreeSelectAsync(NavTreeNode node)
+    {
+        _treeOpen = false;
+        _selectedTreeId = node.Id;
+
+        if (string.Equals(node.Id, RootTreeId, StringComparison.Ordinal))
+        {
+            await SelectScopeAsync(null);
+            return;
+        }
+
+        if (TryParseNodeTreeId(node.Id, out var nodeId, out var group))
+        {
+            if (string.Equals(group, "containers", StringComparison.Ordinal))
+            {
+                _tab = "containers";
+                await SelectScopeAsync(nodeId);
+                await EnsureNodeContainersAsync(nodeId);
+            }
+            else if (string.Equals(group, "compose", StringComparison.Ordinal))
+            {
+                _tab = "compose";
+                await SelectScopeAsync(nodeId);
+                await EnsureNodeComposeAsync(nodeId);
+            }
+            else
+            {
+                await SelectScopeAsync(nodeId);
+                await EnsureNodeContainersAsync(nodeId);
+            }
+
+            return;
+        }
+
+        if (TryParseLeafId(node.Id, out var kind, out var leafNodeId, out var name))
+        {
+            if (string.Equals(kind, "container", StringComparison.Ordinal))
+            {
+                await SelectContainerLeafAsync(leafNodeId, name);
+            }
+            else
+            {
+                await SelectComposeLeafAsync(leafNodeId, name);
+            }
+        }
+    }
+
+    private async Task OnTreeToggleAsync(NavTreeNode node)
+    {
+        if (!TryParseNodeTreeId(node.Id, out var nodeId, out var group))
+        {
+            return;
+        }
+
+        if (string.Equals(group, "containers", StringComparison.Ordinal) || group is null)
+        {
+            await EnsureNodeContainersAsync(nodeId);
+        }
+        else if (string.Equals(group, "compose", StringComparison.Ordinal))
+        {
+            await EnsureNodeComposeAsync(nodeId);
+        }
+    }
+
+    private async Task SelectRootScopeAsync()
+    {
+        _selectedTreeId = RootTreeId;
+        await SelectScopeAsync(null);
+    }
+
+    private async Task SelectScopeAsync(Guid? nodeId)
+    {
+        _treeOpen = false;
+        _nodeFilterValue = nodeId?.ToString() ?? string.Empty;
+        _page = 1;
+        _activeRowKey = null;
+        _activeComposeKey = null;
+        _urlSelectionName = null;
+
+        if (nodeId is { } id)
+        {
+            _selectedTreeId = NodeKey(id);
+            _expandRequest.Add(NodeKey(id));
+        }
+        else
+        {
+            _selectedTreeId = RootTreeId;
+            _expandRequest.Add(RootTreeId);
+        }
+
+        await LoadAsync();
+        await PersistSelectionAsync();
+        await SyncUrlAsync();
+    }
+
+    private async Task SelectContainerLeafAsync(Guid nodeId, string name)
+    {
+        _treeOpen = false;
+        _tab = "containers";
+        _nodeFilterValue = nodeId.ToString();
+        _selectedTreeId = ContainerLeafId(nodeId, name);
+        _expandRequest.Add(NodeKey(nodeId));
+        _searchInput = name;
+        _nameFilter = name;
+        _page = 1;
+        _activeComposeKey = null;
+
+        await EnsureNodeContainersAsync(nodeId);
+        await LoadContainersAsync();
+
+        var row = _containers?.Rows.FirstOrDefault(item =>
+            item.NodeId == nodeId && string.Equals(item.Name, name, StringComparison.Ordinal));
+        if (row is null)
+        {
+            _activeRowKey = null;
+            _urlSelectionName = null;
+            _error = "未在节点上找到容器「" + name + "」，可能已被删除或名称不匹配。";
+        }
+        else
+        {
+            _activeRowKey = ContainerTable.Key(row);
+            _urlSelectionName = row.Name;
+            await OpenDetailAsync(row);
+        }
+
+        await PersistSelectionAsync();
+        await SyncUrlAsync();
+    }
+
+    private async Task SelectComposeLeafAsync(Guid nodeId, string name)
+    {
+        _treeOpen = false;
+        _tab = "compose";
+        _nodeFilterValue = nodeId.ToString();
+        _selectedTreeId = ComposeLeafId(nodeId, name);
+        _expandRequest.Add(NodeKey(nodeId));
+        _page = 1;
+        _activeRowKey = null;
+
+        await EnsureNodeComposeAsync(nodeId);
+        await LoadComposeAsync();
+
+        var project = _compose?.Projects.FirstOrDefault(item =>
+            item.NodeId == nodeId && string.Equals(item.Name, name, StringComparison.Ordinal));
+        if (project is null)
+        {
+            _activeComposeKey = null;
+            _urlSelectionName = null;
+            _composeError = "未找到 Compose 项目「" + name + "」。";
+        }
+        else
+        {
+            _activeComposeKey = ComposeKey(project);
+            _urlSelectionName = project.Name;
+        }
+
+        await PersistSelectionAsync();
+        await SyncUrlAsync();
+    }
+
+    private async Task LocateContainerAsync(string name)
+    {
+        var row = _containers?.Rows.FirstOrDefault(item => string.Equals(item.Name, name, StringComparison.Ordinal));
+        if (row is null)
+        {
+            _tab = "containers";
+            _searchInput = name;
+            _nameFilter = name;
+            _page = 1;
+            await LoadContainersAsync();
+            row = _containers?.Rows.FirstOrDefault(item => string.Equals(item.Name, name, StringComparison.Ordinal));
+        }
+
+        if (row is not null)
+        {
+            _tab = "containers";
+            _selectedTreeId = ContainerLeafId(row.NodeId, row.Name);
+            _activeRowKey = ContainerTable.Key(row);
+            _urlSelectionName = row.Name;
+            _expandRequest.Add(NodeKey(row.NodeId));
+            await EnsureNodeContainersAsync(row.NodeId);
+            await OpenDetailAsync(row);
+            await PersistSelectionAsync();
+            return;
+        }
+
+        _tab = "compose";
+        await LoadComposeAsync();
+        var project = _compose?.Projects.FirstOrDefault(item => string.Equals(item.Name, name, StringComparison.Ordinal));
+        if (project is not null)
+        {
+            _selectedTreeId = ComposeLeafId(project.NodeId, project.Name);
+            _activeComposeKey = ComposeKey(project);
+            _urlSelectionName = project.Name;
+            _expandRequest.Add(NodeKey(project.NodeId));
+            await EnsureNodeComposeAsync(project.NodeId);
+            await PersistSelectionAsync();
+            await SyncUrlAsync();
+            return;
+        }
+
+        _error = "未找到容器或 Compose 项目「" + name + "」。";
+        await PersistSelectionAsync();
+    }
+
+    private async Task EnsureNodeContainersAsync(Guid nodeId, bool force = false)
+    {
+        var key = NodeKey(nodeId) + ":containers";
+        if (!force && _nodeContainersLoaded.Contains(nodeId))
+        {
+            return;
+        }
+
+        if (_treeLoading.Contains(key))
+        {
+            return;
+        }
+
+        _treeLoading.Add(key);
+        _treeErrors.Remove(key);
+        _treeErrors.Remove(NodeKey(nodeId));
+        try
+        {
+            var result = await ContainerService.ListAsync(
+                new ContainerQuery(nodeId, null, "all", "name", "ascending", 1, TreePageSize),
+                Token);
+            _nodeContainers[nodeId] = result.Rows.Select(BuildContainerLeaf).ToArray();
+            _nodeContainersLoaded.Add(nodeId);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            var message = "加载失败：" + exception.Message;
+            _treeErrors[key] = message;
+            _treeErrors[NodeKey(nodeId)] = message;
+        }
+        finally
+        {
+            _treeLoading.Remove(key);
+        }
+    }
+
+    private async Task EnsureNodeComposeAsync(Guid nodeId, bool force = false)
+    {
+        var key = NodeKey(nodeId) + ":compose";
+        if (!force && _nodeComposeLoaded.Contains(nodeId))
+        {
+            return;
+        }
+
+        if (_treeLoading.Contains(key))
+        {
+            return;
+        }
+
+        _treeLoading.Add(key);
+        _treeErrors.Remove(key);
+        try
+        {
+            var result = await ContainerService.ListComposeAsync(
+                new ContainerQuery(nodeId, null, "all", "name", "ascending", 1, TreePageSize),
+                Token);
+            _nodeCompose[nodeId] = result.Projects.Select(BuildComposeLeaf).ToArray();
+            _nodeComposeLoaded.Add(nodeId);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _treeErrors[key] = "加载失败：" + exception.Message;
+        }
+        finally
+        {
+            _treeLoading.Remove(key);
+        }
+    }
+
+    private static string NodeKey(Guid nodeId) => "node:" + nodeId.ToString("N");
+
+    private static string ContainerLeafId(Guid nodeId, string name) => "container:" + nodeId.ToString("N") + ":" + name;
+
+    private static string ComposeLeafId(Guid nodeId, string name) => "compose:" + nodeId.ToString("N") + ":" + name;
+
+    private static string ComposeKey(ComposeProjectRow project) => project.NodeId.ToString("N") + "/" + project.Name;
+
+    private static bool TryParseNodeTreeId(string id, out Guid nodeId, out string? group)
+    {
+        nodeId = Guid.Empty;
+        group = null;
+        if (!id.StartsWith("node:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var rest = id[5..];
+        var separator = rest.IndexOf(':');
+        var guidText = separator < 0 ? rest : rest[..separator];
+        group = separator < 0 ? null : rest[(separator + 1)..];
+        return Guid.TryParseExact(guidText, "N", out nodeId);
+    }
+
+    private static bool TryParseLeafId(string id, out string kind, out Guid nodeId, out string name)
+    {
+        kind = string.Empty;
+        nodeId = Guid.Empty;
+        name = string.Empty;
+        var parts = id.Split(':', 3);
+        if (parts.Length != 3)
+        {
+            return false;
+        }
+
+        if (!string.Equals(parts[0], "container", StringComparison.Ordinal) &&
+            !string.Equals(parts[0], "compose", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!Guid.TryParseExact(parts[1], "N", out nodeId) || string.IsNullOrWhiteSpace(parts[2]))
+        {
+            return false;
+        }
+
+        kind = parts[0];
+        name = parts[2];
+        return true;
+    }
+
+    private async Task PersistSelectionAsync()
+    {
+        if (!_interactive)
+        {
+            return;
+        }
+
+        try
+        {
+            var memory = new ContainerTreeMemory(
+                string.IsNullOrWhiteSpace(_nodeFilterValue) ? null : _nodeFilterValue,
+                _tab);
+            await JS.InvokeVoidAsync("localStorage.setItem", StorageKey, JsonSerializer.Serialize(memory));
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private async Task<bool> RestoreSelectionAsync()
+    {
+        if (NodeId is not null || !string.IsNullOrWhiteSpace(Container))
+        {
+            return false;
+        }
+
+        try
+        {
+            var json = await JS.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            var memory = JsonSerializer.Deserialize<ContainerTreeMemory>(json);
+            if (memory is null)
+            {
+                return false;
+            }
+
+            var tab = string.Equals(memory.Tab, "compose", StringComparison.Ordinal) ? "compose" : "containers";
+            if (Guid.TryParse(memory.NodeId, out var nodeId) && _nodes.Any(node => node.Id.Value == nodeId))
+            {
+                _tab = tab;
+                _nodeFilterValue = nodeId.ToString();
+                _selectedTreeId = NodeKey(nodeId);
+                _expandRequest.Add(NodeKey(nodeId));
+                await LoadAsync();
+                return true;
+            }
+
+            if (string.Equals(tab, "compose", StringComparison.Ordinal))
+            {
+                _tab = tab;
+                await LoadComposeAsync();
+                return true;
+            }
+
+            return false;
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (JsonException)
+        {
+        }
+
+        return false;
+    }
+
+    private async Task SyncUrlAsync()
+    {
+        if (!_interactive)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("history.replaceState", null, string.Empty, BuildUrl());
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private string BuildUrl()
+    {
+        var query = new List<string>(2);
+        if (NodeFilter is { } nodeId)
+        {
+            query.Add("nodeId=" + nodeId.ToString("N"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(_urlSelectionName))
+        {
+            query.Add("id=" + Uri.EscapeDataString(_urlSelectionName));
+        }
+
+        return query.Count == 0 ? "/containers" : "/containers?" + string.Join("&", query);
+    }
+
+    private sealed record ContainerTreeMemory(string? NodeId, string? Tab);
+
+    private static RenderFragment NodeResultStrip(IReadOnlyList<ContainerNodeResult> nodes, DateTimeOffset generatedAt) => builder =>
+    {
+        BuildNodeStrip(
+            builder,
+            nodes.Select(node => (node.NodeName, node.State, node.Error?.Message)).ToArray(),
+            generatedAt);
+    };
+
+    private static RenderFragment NodeResultStrip(IReadOnlyList<ComposeNodeResult> nodes, DateTimeOffset generatedAt) => builder =>
+    {
+        BuildNodeStrip(
+            builder,
+            nodes.Select(node => (node.NodeName, node.State, node.Error?.Message)).ToArray(),
+            generatedAt);
+    };
+
+    private static void BuildNodeStrip(
+        Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder builder,
+        IReadOnlyList<(string NodeName, ContainerNodeState State, string? Error)> nodes,
+        DateTimeOffset generatedAt)
+    {
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", "node-status");
+        builder.OpenElement(2, "div");
+        builder.AddAttribute(3, "class", "node-status-head");
+        builder.AddContent(4, "节点采集状态");
+        builder.OpenElement(5, "span");
+        builder.AddAttribute(6, "class", "muted small");
+        builder.AddContent(7, "生成于 " + generatedAt.ToLocalTime().ToString("HH:mm:ss"));
+        builder.CloseElement();
+        builder.CloseElement();
+
+        builder.OpenElement(8, "div");
+        builder.AddAttribute(9, "class", "node-status-list");
+        var sequence = 10;
+        foreach (var node in nodes)
+        {
+            builder.OpenElement(sequence++, "div");
+            builder.AddAttribute(sequence++, "class", node.State == ContainerNodeState.Success
+                ? "node-status-item"
+                : "node-status-item node-status-error");
+            builder.OpenElement(sequence++, "span");
+            builder.AddAttribute(sequence++, "class", "node-status-name");
+            builder.AddContent(sequence++, node.NodeName);
+            builder.CloseElement();
+            builder.OpenElement(sequence++, "span");
+            builder.AddAttribute(sequence++, "class", "badge " + (node.State == ContainerNodeState.Success ? "badge-ok" : "badge-error"));
+            builder.AddContent(sequence++, node.State == ContainerNodeState.Success ? "成功" : "失败");
+            builder.CloseElement();
+            if (!string.IsNullOrWhiteSpace(node.Error))
+            {
+                builder.OpenElement(sequence++, "div");
+                builder.AddAttribute(sequence++, "class", "node-status-error-text muted small");
+                builder.AddContent(sequence++, node.Error);
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+        builder.CloseElement();
+    }
+}

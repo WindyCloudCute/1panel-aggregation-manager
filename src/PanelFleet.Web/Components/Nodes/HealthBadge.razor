@@ -1,0 +1,21 @@
+@if (Health == NodeHealth.Online)
+{
+    <span class="badge badge-ok">在线</span>
+}
+else if (Health == NodeHealth.Degraded)
+{
+    <span class="badge badge-warn">降级</span>
+}
+else if (Health == NodeHealth.Offline)
+{
+    <span class="badge badge-error">离线</span>
+}
+else
+{
+    <span class="badge badge-unknown">未知</span>
+}
+
+@code {
+    [Parameter]
+    public NodeHealth Health { get; set; }
+}

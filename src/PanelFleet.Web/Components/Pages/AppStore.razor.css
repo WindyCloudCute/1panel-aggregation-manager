@@ -1,0 +1,120 @@
+.appstore-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+}
+
+.tab {
+    border: none;
+    background: transparent;
+    padding: 10px 16px;
+    font: inherit;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+}
+
+.tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+}
+
+.store-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.appstore-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.install-panel {
+    margin-top: 16px;
+    max-width: 860px;
+}
+
+.install-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.install-panel-head h2 {
+    margin: 0;
+}
+
+.detail-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.operation-panel {
+    margin-top: 16px;
+}
+
+.checkbox-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-inline input {
+    min-width: auto;
+}
+
+.appstore-modal {
+    width: min(640px, 94vw);
+    max-height: 86vh;
+    overflow-y: auto;
+}
+
+.appstore-modal-wide {
+    width: min(860px, 96vw);
+}
+
+.appstore-modal h2 {
+    margin-top: 0;
+}
+
+.form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.form-row.checkbox-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.form-label {
+    font-weight: 600;
+    color: #374151;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+h3 {
+    font-size: 14px;
+    margin: 16px 0 8px;
+}

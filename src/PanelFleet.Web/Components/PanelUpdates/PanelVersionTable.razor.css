@@ -1,0 +1,79 @@
+/* 面板更新：版本检查表格（scoped CSS，需 App.razor 引用 PanelFleet.Web.styles.css） */
+
+.update-table td,
+.update-table th {
+    vertical-align: top;
+}
+
+.update-table {
+    border-radius: var(--radius-lg, 16px);
+}
+
+.update-select {
+    width: 3.5rem;
+    text-align: center;
+}
+
+.update-row-blocked {
+    opacity: 0.72;
+}
+
+.update-row-highlight > td {
+    background: var(--primary-soft, rgba(37, 99, 235, 0.08));
+}
+
+.update-node-name {
+    font-weight: 600;
+}
+
+.update-version {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    white-space: nowrap;
+}
+
+.update-precheck {
+    min-width: 12rem;
+}
+
+.update-reasons {
+    margin: 0.35rem 0 0;
+    padding-left: 1.1rem;
+    font-size: 0.78rem;
+    color: var(--warn, #8a5a00);
+}
+
+.update-warnings {
+    margin: 0.35rem 0 0;
+    padding-left: 1.1rem;
+    font-size: 0.75rem;
+    color: var(--muted, #6b7280);
+}
+
+.update-notes-cell {
+    min-width: 10rem;
+}
+
+.update-notes summary {
+    cursor: pointer;
+    color: var(--primary, #2563eb);
+    font-size: 0.85rem;
+}
+
+.update-notes pre {
+    max-height: 14rem;
+    overflow: auto;
+    margin: 0.4rem 0 0;
+    padding: 0.5rem;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-md, 10px);
+    background: var(--bg, #f9fafb);
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .update-table * {
+        transition: none;
+    }
+}

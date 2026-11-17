@@ -1,0 +1,17 @@
+@page "/containers"
+@attribute [Authorize]
+@using PanelFleet.Web.Components.Containers
+
+<PageTitle>容器管理</PageTitle>
+
+<ContainersView NodeId="NodeId" Container="@Container" />
+
+@code {
+    /// <summary>深链节点：/containers?nodeId=...</summary>
+    [SupplyParameterFromQuery(Name = "nodeId")]
+    public Guid? NodeId { get; set; }
+
+    /// <summary>深链资源：/containers?nodeId=...&amp;id=...（容器名或 Compose 项目名）。</summary>
+    [SupplyParameterFromQuery(Name = "id")]
+    public string? Container { get; set; }
+}

@@ -1,0 +1,206 @@
+@using PanelFleet.Application.Websites
+@using PanelFleet.Web.Components.Websites
+
+<div class="modal-backdrop" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="modal proxy-modal" @onclick:stopPropagation="true">
+        <h2>@(Existing is null ? "新增反向代理" : "编辑反向代理")</h2>
+        <div class="form-grid">
+            <div class="form-row">
+                <label class="form-label">代理名称 <span class="required">*</span></label>
+                <input @bind="_name" @bind:event="oninput" maxlength="64" disabled="@(Busy || Existing is not null)" />
+            </div>
+            <div class="form-row">
+                <label class="form-label">路径（match） <span class="required">*</span></label>
+                <input @bind="_match" @bind:event="oninput" placeholder="/api" disabled="@Busy" />
+            </div>
+            <div class="form-row">
+                <label class="form-label">代理目标（proxyPass） <span class="required">*</span></label>
+                <input @bind="_proxyPass" @bind:event="oninput" placeholder="http://127.0.0.1:8080" disabled="@Busy" />
+            </div>
+            <div class="form-row">
+                <label class="form-label">代理 Host（proxyHost）</label>
+                <input @bind="_proxyHost" @bind:event="oninput" placeholder="$host" disabled="@Busy" />
+            </div>
+            <div class="form-row">
+                <label class="form-label">上游 SNI / 证书名</label>
+                <input @bind="_proxySslName" @bind:event="oninput" disabled="@Busy" />
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_enable" disabled="@Busy" /><span>启用代理</span></label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_cache" disabled="@Busy" /><span>启用缓存</span></label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_sni" disabled="@Busy" /><span>上游 SNI</span></label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_sslVerify" disabled="@Busy" /><span>校验上游证书</span></label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline"><input type="checkbox" @bind="_cors" disabled="@Busy" /><span>启用 CORS</span></label>
+            </div>
+            @if (_cors)
+            {
+                <div class="form-row">
+                    <label class="form-label">允许来源</label>
+                    <input @bind="_allowOrigins" @bind:event="oninput" disabled="@Busy" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">允许方法</label>
+                    <input @bind="_allowMethods" @bind:event="oninput" disabled="@Busy" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">允许头</label>
+                    <input @bind="_allowHeaders" @bind:event="oninput" disabled="@Busy" />
+                </div>
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline"><input type="checkbox" @bind="_allowCredentials" disabled="@Busy" /><span>允许凭证</span></label>
+                </div>
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline"><input type="checkbox" @bind="_preflight" disabled="@Busy" /><span>预检请求</span></label>
+                </div>
+            }
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+        <div class="modal-actions">
+            <button type="button" class="btn" @onclick="() => OnCancel.InvokeAsync()" disabled="@Busy">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@Busy">
+                @(Busy ? "处理中…" : "保存（预览确认后执行）")
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _name = string.Empty;
+    private string _match = "/";
+    private string _proxyPass = "http://";
+    private string _proxyHost = "$host";
+    private string? _proxySslName;
+    private bool _enable = true;
+    private bool _cache;
+    private bool _sni;
+    private bool _sslVerify;
+    private bool _cors;
+    private string? _allowOrigins;
+    private string? _allowMethods;
+    private string? _allowHeaders;
+    private bool _allowCredentials;
+    private bool _preflight;
+    private string? _error;
+    private long _loadedWebsiteId;
+
+    [Parameter]
+    public long WebsiteId { get; set; }
+
+    [Parameter]
+    public WebsiteProxy? Existing { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<ProxyEditResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (WebsiteId == _loadedWebsiteId)
+        {
+            return;
+        }
+
+        _loadedWebsiteId = WebsiteId;
+        _error = null;
+        if (Existing is null)
+        {
+            _name = string.Empty;
+            _match = "/";
+            _proxyPass = "http://";
+            _proxyHost = "$host";
+            _proxySslName = null;
+            _enable = true;
+            _cache = false;
+            _sni = false;
+            _sslVerify = false;
+            _cors = false;
+            _allowOrigins = null;
+            _allowMethods = null;
+            _allowHeaders = null;
+            _allowCredentials = false;
+            _preflight = false;
+            return;
+        }
+
+        _name = Existing.Name;
+        _match = Existing.Match ?? "/";
+        _proxyPass = Existing.ProxyPass ?? "http://";
+        _proxyHost = Existing.ProxyHost ?? "$host";
+        _proxySslName = Existing.ProxySslName;
+        _enable = Existing.Enable;
+        _cache = Existing.Cache;
+        _sni = Existing.Sni;
+        _sslVerify = Existing.SslVerify;
+        _cors = Existing.Cors;
+        _allowOrigins = Existing.AllowOrigins;
+        _allowMethods = Existing.AllowMethods;
+        _allowHeaders = Existing.AllowHeaders;
+        _allowCredentials = Existing.AllowCredentials;
+        _preflight = Existing.Preflight;
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        var name = (_name ?? string.Empty).Trim();
+        if (name.Length == 0)
+        {
+            _error = "请填写代理名称。";
+            return;
+        }
+
+        var match = (_match ?? "/").Trim();
+        if (!match.StartsWith('/'))
+        {
+            _error = "代理路径必须以 / 开头。";
+            return;
+        }
+
+        var proxyPass = (_proxyPass ?? string.Empty).Trim();
+        if (!proxyPass.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            && !proxyPass.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            _error = "代理目标必须是 http:// 或 https:// 地址。";
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(new ProxyEditResult(
+            WebsiteId,
+            Existing is null ? "create" : "edit",
+            name,
+            match,
+            proxyPass,
+            string.IsNullOrWhiteSpace(_proxyHost) ? "$host" : _proxyHost.Trim(),
+            _enable,
+            _cache,
+            0,
+            "m",
+            10,
+            "m",
+            _sni,
+            string.IsNullOrWhiteSpace(_proxySslName) ? null : _proxySslName.Trim(),
+            _sslVerify,
+            _cors,
+            _allowOrigins,
+            _allowMethods,
+            _allowHeaders,
+            _allowCredentials,
+            _preflight));
+    }
+}

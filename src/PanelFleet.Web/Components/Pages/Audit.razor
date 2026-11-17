@@ -1,0 +1,104 @@
+@page "/audit"
+@attribute [Authorize]
+@inject IAuditStore AuditStore
+
+<PageTitle>审计</PageTitle>
+
+<PageShell>
+    <div class="page-header">
+        <h1>审计</h1>
+        <div class="inline-form">
+            <input @bind="_actionFilter" placeholder="按 action 过滤，如 node.created" />
+            <button type="button" class="btn" @onclick="LoadAsync" disabled="@_busy">
+                @if (_busy)
+                {
+                    <Spinner />
+                    <text>刷新中…</text>
+                }
+                else
+                {
+                    <text>刷新</text>
+                }
+            </button>
+        </div>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="alert alert-error">@_error</div>
+    }
+
+    @if (_entries is null)
+    {
+        <StatePanel Tone="loading"
+                    Title="正在加载审计记录…"
+                    Description="读取本地审计库中最近 100 条操作记录。" />
+    }
+    else if (_entries.Count == 0)
+    {
+        <StatePanel Tone="neutral"
+                    Title="暂无审计记录"
+                    Description="接入节点、登录或修改配置后，这里会记录操作者、动作与对象。" />
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>操作者</th>
+                        <th>动作</th>
+                        <th>对象</th>
+                        <th>IP</th>
+                        <th>详情</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var entry in _entries)
+                    {
+                        <tr>
+                            <td class="muted">@entry.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td>@(entry.Actor.Name ?? entry.Actor.Subject ?? "system")</td>
+                            <td><span class="badge badge-unknown">@entry.Action</span></td>
+                            <td>@entry.TargetType @entry.TargetId</td>
+                            <td class="muted">@(entry.Actor.ClientIp ?? "-")</td>
+                            <td class="muted detail-cell">@entry.DetailJson</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</PageShell>
+
+@code {
+    private IReadOnlyList<AuditEntry>? _entries;
+    private string? _actionFilter;
+    private string? _error;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var action = string.IsNullOrWhiteSpace(_actionFilter) ? null : _actionFilter.Trim();
+            _entries = await AuditStore.ListAsync(100, action, null, default);
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

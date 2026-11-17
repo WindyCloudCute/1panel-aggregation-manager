@@ -1,0 +1,282 @@
+@using PanelFleet.Application.Models
+
+<div class="node-card @(Snapshot.IsEnabled ? string.Empty : "node-card-disabled")">
+    <div class="node-card-header">
+        <div class="node-card-title">
+            <span class="node-name">@Snapshot.Name</span>
+            <HealthBadge Health="@Snapshot.LiveHealth" />
+            @if (Snapshot.State == NodeDataState.Disabled)
+            {
+                <span class="badge badge-unknown">已禁用</span>
+            }
+            else if (Snapshot.State == NodeDataState.Pending)
+            {
+                <span class="badge badge-unknown">等待采集</span>
+            }
+            else if (Snapshot.State == NodeDataState.Failed)
+            {
+                <span class="badge badge-error">采集失败</span>
+            }
+            else if (Snapshot.IsStale)
+            {
+                <span class="badge badge-warn">缓存 · @AgeText(Snapshot.FetchedAt)</span>
+            }
+
+            @if (Snapshot.CircuitOpen)
+            {
+                <span class="badge badge-warn" title="连续失败后熔断，稍后自动重试">熔断 @RemainingText</span>
+            }
+        </div>
+        <div class="actions">
+            @if (Snapshot.IsEnabled)
+            {
+                <button type="button" class="link-button" @onclick="RetryAsync" disabled="@IsRetrying">
+                    @(IsRetrying ? "重试中…" : "重试")
+                </button>
+            }
+            <a class="link-button" href="@PanelUrl" target="_blank" rel="noopener noreferrer" title="@PanelTitle">打开面板</a>
+        </div>
+    </div>
+
+    <div class="muted small node-url">
+        @Snapshot.BaseUri
+        @if (!string.IsNullOrWhiteSpace(Snapshot.GroupName))
+        {
+            <span>· @Snapshot.GroupName</span>
+        }
+        @if (Snapshot.Tags.Count > 0)
+        {
+            <span>· @string.Join(" / ", Snapshot.Tags)</span>
+        }
+    </div>
+
+    @if (Snapshot.Metrics is not { } metrics)
+    {
+        <p class="muted">@PendingHint</p>
+    }
+    else
+    {
+        <div class="metric-bars">
+            <MetricBar Label="CPU" Percent="metrics.CpuUsedPercent" Text="@FormatPercent(metrics.CpuUsedPercent)" />
+            <MetricBar Label="内存" Percent="metrics.MemoryUsedPercent" Text="@MemoryText(metrics)" />
+        </div>
+
+        <div class="disk-list">
+            <div class="metric-bar-head">
+                <span>磁盘</span>
+                <span class="metric-bar-text">@(metrics.Disks.Count == 0 ? "—" : $"{metrics.Disks.Count} 个分区")</span>
+            </div>
+            @if (metrics.Disks.Count == 0)
+            {
+                <p class="muted small">无磁盘数据。</p>
+            }
+            else
+            {
+                @foreach (var disk in metrics.Disks)
+                {
+                    <div class="disk-row">
+                        <div class="disk-row-head">
+                            <span class="disk-path" title="@disk.Path">@disk.Path</span>
+                            <span class="disk-percent @(disk.UsedPercent >= 90 ? "disk-danger" : string.Empty)">@FormatPercent(disk.UsedPercent)</span>
+                        </div>
+                        <div class="disk-row-body">
+                            <span class="disk-usage">@FormatBytesOptional(disk.UsedBytes) / @FormatBytesOptional(disk.TotalBytes)</span>
+                            <div class="metric-bar-track disk-track">
+                                <div class="metric-bar-fill @DiskTone(disk.UsedPercent)"
+                                     style="width:@DiskWidthText(disk.UsedPercent)%"></div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+
+        <div class="node-system">
+            <span>负载 @FormatNumber(metrics.Load1) / @FormatNumber(metrics.Load5) / @FormatNumber(metrics.Load15)</span>
+            <span>运行 @FormatUptime(metrics.UptimeSeconds)</span>
+        </div>
+
+        <div class="node-counts">
+            <span>网站 <strong>@(metrics.WebsiteCount?.ToString() ?? "-")</strong></span>
+            <span>应用 <strong>@(metrics.AppCount?.ToString() ?? "-")</strong></span>
+            <span>数据库 <strong>@(metrics.DatabaseCount?.ToString() ?? "-")</strong></span>
+            <span>计划任务 <strong>@(metrics.CronjobCount?.ToString() ?? "-")</strong></span>
+        </div>
+
+        <div class="node-system muted small">
+            <span>@(metrics.OsDescription ?? "—")</span>
+            <span>内核 @(metrics.KernelVersion ?? "—")</span>
+            @if (!string.IsNullOrWhiteSpace(metrics.IpAddress))
+            {
+                <span>IP @metrics.IpAddress</span>
+            }
+            <span>1Panel @(string.IsNullOrWhiteSpace(Snapshot.PanelVersion) ? "—" : Snapshot.PanelVersion)</span>
+        </div>
+    }
+
+    @if (Snapshot.Error is not null)
+    {
+        <div class="node-error" title="@Snapshot.Error.Message">@TrimError(Snapshot.Error.Message)</div>
+    }
+
+    <div class="node-footer muted small">
+        <span title="实时采集：@FormatClock(Snapshot.AttemptedAt)；P2 巡检：@FormatClock(Snapshot.LastCheckedAt)">
+            数据时间 @FormatClock(Snapshot.FetchedAt)@AgeText(Snapshot.FetchedAt)
+        </span>
+        @if (Snapshot.Error is not null)
+        {
+            <a class="link-button" href="/nodes/@(Snapshot.NodeId.Value)/edit">编辑节点</a>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public NodeOverviewSnapshot Snapshot { get; set; } = null!;
+
+    [Parameter]
+    public DateTimeOffset Now { get; set; }
+
+    [Parameter]
+    public bool IsRetrying { get; set; }
+
+    [Parameter]
+    public EventCallback<NodeId> OnRetry { get; set; }
+
+    private string PanelUrl
+    {
+        get
+        {
+            var root = Snapshot.BaseUri.AbsoluteUri.TrimEnd('/');
+            return string.IsNullOrWhiteSpace(Snapshot.SecurityEntrance)
+                ? root + "/"
+                : root + "/" + Snapshot.SecurityEntrance;
+        }
+    }
+
+    private string PanelTitle => string.IsNullOrWhiteSpace(Snapshot.SecurityEntrance)
+        ? "未配置安全入口，打开面板根地址"
+        : "打开 1Panel 面板";
+
+    private string PendingHint => Snapshot.State == NodeDataState.Disabled
+        ? "已禁用，不参与采集。"
+        : Snapshot.CircuitOpen
+            ? "熔断中，稍后自动重试，或点击「重试」立即采集。"
+            : "等待采集…";
+
+    private string RemainingText
+    {
+        get
+        {
+            if (Snapshot.CircuitOpenUntil is not { } until)
+            {
+                return string.Empty;
+            }
+
+            var remaining = until - Now;
+            return remaining > TimeSpan.Zero ? $"{(int)remaining.TotalSeconds}s" : string.Empty;
+        }
+    }
+
+    private Task RetryAsync() => OnRetry.InvokeAsync(Snapshot.NodeId);
+
+    private static string MemoryText(NodeMetrics metrics) =>
+        metrics.MemoryUsedBytes is { } used && metrics.MemoryTotalBytes is { } total
+            ? $"{FormatBytes(used)} / {FormatBytes(total)}"
+            : "—";
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0)
+        {
+            return "0";
+        }
+
+        const double tb = 1024d * 1024d * 1024d * 1024d;
+        const double gb = 1024d * 1024d * 1024d;
+        const double mb = 1024d * 1024d;
+        return bytes >= tb
+            ? $"{bytes / tb:0.00} TB"
+            : bytes >= gb
+                ? $"{bytes / gb:0.0} GB"
+                : $"{bytes / mb:0.0} MB";
+    }
+
+    private static string FormatBytesOptional(long? bytes) =>
+        bytes is > 0 ? FormatBytes(bytes.Value) : "—";
+
+    private static string DiskWidthText(double? percent)
+    {
+        var width = percent is null ? 0d : Math.Clamp(percent.Value, 0d, 100d);
+        return width.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>磁盘用量色调：≥90% 危险、≥75% 警告，其余正常。</summary>
+    private static string DiskTone(double? percent) => percent switch
+    {
+        null => "is-muted",
+        >= 90d => "is-danger",
+        >= 75d => "is-warn",
+        _ => "is-normal"
+    };
+
+    private static string FormatPercent(double? value) => value is null ? "—" : $"{value.Value:0.0}%";
+
+    private static string FormatNumber(double? value) => value is null ? "—" : $"{value.Value:0.00}";
+
+    private static string FormatUptime(long? seconds)
+    {
+        if (seconds is not > 0)
+        {
+            return "—";
+        }
+
+        var span = TimeSpan.FromSeconds(seconds.Value);
+        if (span.TotalDays >= 1)
+        {
+            return $"{(int)span.TotalDays} 天 {span.Hours} 小时";
+        }
+
+        return span.TotalHours >= 1 ? $"{(int)span.TotalHours} 小时" : $"{(int)span.TotalMinutes} 分钟";
+    }
+
+    private static string FormatClock(DateTimeOffset? time) =>
+        time?.ToLocalTime().ToString("HH:mm:ss") ?? "—";
+
+    private static string AgeText(DateTimeOffset? time)
+    {
+        if (time is not { } value)
+        {
+            return string.Empty;
+        }
+
+        var delta = DateTimeOffset.Now - value;
+        if (delta < TimeSpan.FromSeconds(5))
+        {
+            return string.Empty;
+        }
+
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return $"（{(int)delta.TotalSeconds} 秒前）";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            return $"（{(int)delta.TotalMinutes} 分钟前）";
+        }
+
+        return $"（{(int)delta.TotalHours} 小时前）";
+    }
+
+    private static string TrimError(string message)
+    {
+        if (!message.StartsWith("[", StringComparison.Ordinal))
+        {
+            return message;
+        }
+
+        var end = message.IndexOf("] ", StringComparison.Ordinal);
+        return end >= 0 && end + 2 < message.Length ? message[(end + 2)..] : message;
+    }
+}

@@ -1,0 +1,254 @@
+/* 应用商店两栏布局；颜色只用 app.css 语义令牌，间距/圆角/阴影缺省时带 fallback。 */
+.appstore-layout {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.appstore-tree-panel {
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 132px);
+    overflow: auto;
+    padding: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg, 16px);
+    box-shadow: var(--shadow-sm, none);
+    transition: border-color var(--dur-fast, 120ms) var(--ease-out, ease);
+}
+
+.appstore-tree-panel:hover {
+    border-color: var(--primary-soft, var(--border));
+}
+
+.appstore-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+@media (max-width: 1023px) {
+    .appstore-layout {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 14px;
+    }
+
+    .appstore-tree-panel {
+        position: static;
+        max-height: 300px;
+    }
+}
+
+/* —— 左树标题 —— */
+.appstore-layout ::deep .tree-panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.appstore-layout ::deep .tree-panel-tip {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    line-height: 1.5;
+}
+
+/* —— 右侧工作区标题 —— */
+.appstore-layout ::deep .work-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
+    animation: work-head-in var(--dur, 200ms) var(--ease-out, ease) both;
+}
+
+.appstore-layout ::deep .work-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.appstore-layout ::deep .work-title h2 {
+    margin: 0;
+    font-size: 1.08rem;
+    line-height: 1.4;
+}
+
+.appstore-layout ::deep .work-sub {
+    flex-basis: 100%;
+    line-height: 1.5;
+}
+
+.appstore-layout ::deep .work-head .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+/* —— 卡片/面板统一 —— */
+.appstore-layout ::deep .work-card {
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
+    transition: border-color var(--dur-fast, 120ms) var(--ease-out, ease),
+                box-shadow var(--dur-fast, 120ms) var(--ease-out, ease);
+}
+
+.appstore-layout ::deep .work-card:hover {
+    border-color: var(--primary-soft, var(--border));
+    box-shadow: var(--shadow-sm, none);
+}
+
+/* —— 汇总表 —— */
+.appstore-layout ::deep .aggregate-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.appstore-layout ::deep .aggregate-table th,
+.appstore-layout ::deep .aggregate-table td {
+    padding: 10px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+.appstore-layout ::deep .aggregate-table th {
+    font-weight: 600;
+    color: var(--muted);
+    font-size: .86rem;
+    white-space: nowrap;
+}
+
+.appstore-layout ::deep .aggregate-table tbody tr {
+    transition: background var(--dur-fast, 120ms) var(--ease-out, ease);
+}
+
+.appstore-layout ::deep .aggregate-table tbody tr:hover {
+    background: var(--panel-hover, var(--bg));
+}
+
+.appstore-layout ::deep .aggregate-node {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 120px;
+}
+
+/* —— 空态 / 错误态 —— */
+.appstore-layout ::deep .work-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 40px 16px;
+    text-align: center;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md, 12px);
+}
+
+.appstore-layout ::deep .work-empty svg {
+    width: 36px;
+    height: 36px;
+    opacity: .6;
+}
+
+/* —— 骨架屏 —— */
+.appstore-layout ::deep .skeleton-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.appstore-layout ::deep .skeleton-row {
+    height: 46px;
+    border-radius: var(--radius-sm, 8px);
+    background: linear-gradient(90deg, var(--bg) 25%, var(--panel-hover, var(--bg)) 37%, var(--bg) 63%);
+    background-size: 400% 100%;
+    animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+.appstore-layout ::deep .skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.appstore-layout ::deep .skeleton-card {
+    height: 132px;
+    border-radius: var(--radius-md, 12px);
+    background: linear-gradient(90deg, var(--bg) 25%, var(--panel-hover, var(--bg)) 37%, var(--bg) 63%);
+    background-size: 400% 100%;
+    animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+@keyframes work-head-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes skeleton-shimmer {
+    0% {
+        background-position: 100% 50%;
+    }
+
+    100% {
+        background-position: 0 50%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .appstore-layout ::deep .work-head,
+    .appstore-layout ::deep .skeleton-row,
+    .appstore-layout ::deep .skeleton-card {
+        animation: none;
+    }
+
+    .appstore-layout ::deep .work-head {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.appstore-layout ::deep .install-app-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
+    background: var(--panel-hover, var(--bg));
+}
+
+.appstore-layout ::deep .install-app-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}

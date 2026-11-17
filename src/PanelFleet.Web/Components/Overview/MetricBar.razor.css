@@ -1,0 +1,58 @@
+/* 指标条：轨道 + 填充，色调由阈值决定（颜色全部来自语义令牌）。 */
+
+.metric-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.metric-bar-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--muted, #6b7280);
+}
+
+.metric-bar-text {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--text, #111827);
+}
+
+.metric-bar-track {
+    height: 6px;
+    overflow: hidden;
+    background: var(--panel-hover, #eef2f7);
+    border-radius: 999px;
+}
+
+.metric-bar-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary, #2563eb);
+    transition: width var(--dur-slow, 320ms) var(--ease-out, ease-out);
+}
+
+.metric-bar-fill.is-normal {
+    background: var(--primary, #2563eb);
+}
+
+.metric-bar-fill.is-warn {
+    background: var(--warn, #b45309);
+}
+
+.metric-bar-fill.is-danger {
+    background: var(--error, #b91c1c);
+}
+
+.metric-bar-fill.is-muted {
+    background: var(--border, #cbd5e1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .metric-bar-fill {
+        transition: none;
+    }
+}

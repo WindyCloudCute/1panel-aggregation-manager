@@ -1,0 +1,368 @@
+@using PanelFleet.Application.Configuration
+@using PanelFleet.Web.Components.Settings
+
+@* PanelFleet 自身设置：Group 卡片表单 + 只读运行信息；保存/恢复默认由页面处理持久化。 *@
+<div class="settings-panel">
+    <div class="settings-panel-header">
+        <div>
+            <h2>PanelFleet 设置</h2>
+            <p class="muted small">保存后立即热生效，无需重启；带 * 的项会约束后台采集与列表行为。</p>
+        </div>
+        <div class="settings-panel-actions">
+            <button type="button" class="btn" @onclick="ResetRequested" disabled="@(Busy || _saving)">
+                恢复默认
+            </button>
+            <button type="button" class="btn btn-primary" @onclick="SaveAsync" disabled="@(!CanSave)">
+                @if (Busy || _saving)
+                {
+                    <span class="spinner" aria-hidden="true"></span>
+                    <span>保存中…</span>
+                }
+                else
+                {
+                    <span>保存设置</span>
+                }
+            </button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Message))
+    {
+        <div class="alert" role="status">@Message</div>
+    }
+
+    <div class="settings-card-grid">
+        <section class="card settings-card">
+            <h3>刷新与缓存</h3>
+            <p class="muted small">控制总览与资源清单的后台刷新节奏。</p>
+
+            <label class="settings-field">
+                <span class="settings-field-label">@Label("overviewRefreshSeconds", "总览刷新间隔")</span>
+                <span class="settings-field-input">
+                    <input type="number" min="5" max="3600" @bind="_form.OverviewRefreshSeconds" @bind:event="onchange" disabled="@Busy" />
+                    <span class="settings-unit">秒</span>
+                </span>
+                @MetaLine("overviewRefreshSeconds")@FieldError("overviewRefreshSeconds")
+            </label>
+
+            <label class="settings-field">
+                <span class="settings-field-label">@Label("resourceRefreshSeconds", "资源刷新间隔")</span>
+                <span class="settings-field-input">
+                    <input type="number" min="5" max="3600" @bind="_form.ResourceRefreshSeconds" @bind:event="onchange" disabled="@Busy" />
+                    <span class="settings-unit">秒</span>
+                </span>
+                @MetaLine("resourceRefreshSeconds")@FieldError("resourceRefreshSeconds")
+            </label>
+
+            <label class="settings-field">
+                <span class="settings-field-label">@Label("cacheTtlSeconds", "资源缓存 TTL")</span>
+                <span class="settings-field-input">
+                    <input type="number" min="10" max="86400" @bind="_form.CacheTtlSeconds" @bind:event="onchange" disabled="@Busy" />
+                    <span class="settings-unit">秒</span>
+                </span>
+                @MetaLine("cacheTtlSeconds")@FieldError("cacheTtlSeconds")
+            </label>
+        </section>
+
+        <section class="card settings-card">
+            <h3>列表与采集</h3>
+            <p class="muted small">限制单页数据量与单节点资源采集上限，避免大集群拖慢页面。</p>
+
+            <label class="settings-field">
+                <span class="settings-field-label">@Label("pageSize", "每页条数")</span>
+                <span class="settings-field-input">
+                    <input type="number" min="10" max="500" @bind="_form.PageSize" @bind:event="onchange" disabled="@Busy" />
+                    <span class="settings-unit">条</span>
+                </span>
+                @MetaLine("pageSize")@FieldError("pageSize")
+            </label>
+
+            <label class="settings-field">
+                <span class="settings-field-label">@Label("resourceLimit", "单节点资源上限")</span>
+                <span class="settings-field-input">
+                    <input type="number" min="50" max="10000" @bind="_form.ResourceLimit" @bind:event="onchange" disabled="@Busy" />
+                    <span class="settings-unit">条</span>
+                </span>
+                @MetaLine("resourceLimit")@FieldError("resourceLimit")
+            </label>
+
+            <label class="settings-field">
+                <span class="settings-field-label">@Label("logLineLimit", "日志默认条数")</span>
+                <span class="settings-field-input">
+                    <input type="number" min="100" max="20000" @bind="_form.LogLineLimit" @bind:event="onchange" disabled="@Busy" />
+                    <span class="settings-unit">条</span>
+                </span>
+                @MetaLine("logLineLimit")@FieldError("logLineLimit")
+            </label>
+        </section>
+
+        <section class="card settings-card">
+            <h3>Web 终端</h3>
+            <p class="muted small">关闭后所有节点的主机/容器终端入口不可用（不影响已有 1Panel 会话）。</p>
+
+            <label class="settings-switch">
+                <input type="checkbox" @bind="_form.TerminalEnabled" disabled="@Busy" />
+                <span class="settings-switch-track" aria-hidden="true"></span>
+                <span class="settings-switch-text">
+                    <strong>@Label("terminalEnabled", "启用 Web 终端")</strong>
+                    <span class="muted small">仅管理员可打开，操作会写入审计。</span>
+                </span>
+            </label>
+            @MetaLine("terminalEnabled")
+
+            <label class="settings-field">
+                <span class="settings-field-label">@Label("terminalSessionTimeoutMinutes", "会话空闲超时")</span>
+                <span class="settings-field-input">
+                    <input type="number" min="1" max="480" @bind="_form.TerminalSessionTimeoutMinutes" @bind:event="onchange" disabled="@(Busy || !_form.TerminalEnabled)" />
+                    <span class="settings-unit">分钟</span>
+                </span>
+                @MetaLine("terminalSessionTimeoutMinutes")@FieldError("terminalSessionTimeoutMinutes")
+            </label>
+        </section>
+
+        <section class="card settings-card">
+            <h3>审计</h3>
+            <p class="muted small">审计记录保留时长，超期记录由后台清理任务删除。</p>
+
+            <label class="settings-field">
+                <span class="settings-field-label">@Label("auditRetentionDays", "保留天数")</span>
+                <span class="settings-field-input">
+                    <input type="number" min="7" max="3650" @bind="_form.AuditRetentionDays" @bind:event="onchange" disabled="@Busy" />
+                    <span class="settings-unit">天</span>
+                </span>
+                @MetaLine("auditRetentionDays")@FieldError("auditRetentionDays")
+            </label>
+        </section>
+    </div>
+
+    <section class="card settings-card settings-readonly">
+        <h3>运行信息</h3>
+        <p class="muted small">由启动配置决定，只读展示；修改需编辑配置文件或环境变量后重启。</p>
+        <dl class="settings-readonly-list">
+            <div>
+                <dt>数据目录</dt>
+                <dd>@ValueOrDash(_form.DataDirectory)</dd>
+            </div>
+            <div>
+                <dt>监听地址</dt>
+                <dd>@ValueOrDash(_form.ListenUrl)</dd>
+            </div>
+            <div>
+                <dt>OIDC Authority</dt>
+                <dd>@ValueOrDash(_form.OidcAuthority)</dd>
+            </div>
+            <div>
+                <dt>OIDC ClientId</dt>
+                <dd>@ValueOrDash(_form.OidcClientId)</dd>
+            </div>
+            <div>
+                <dt>节点数量</dt>
+                <dd>@_form.NodeCount</dd>
+            </div>
+            <div>
+                <dt>版本</dt>
+                <dd>@ValueOrDash(_form.Version)</dd>
+            </div>
+            <div>
+                <dt>当前主题</dt>
+                <dd>@(string.IsNullOrWhiteSpace(_form.CurrentTheme) ? "跟随系统" : _form.CurrentTheme)</dd>
+            </div>
+        </dl>
+        <p class="muted small">OIDC Secret 不会在页面显示。</p>
+    </section>
+
+    @if (_confirmReset)
+    {
+        <div class="modal-backdrop" @onclick="CancelReset">
+            <div class="modal" @onclick:stopPropagation="true">
+                <h2>恢复默认设置</h2>
+                <p>将把所有可编辑项恢复为默认值并立即保存，确定继续？</p>
+                <div class="actions">
+                    <button type="button" class="btn" @onclick="CancelReset">取消</button>
+                    <button type="button" class="btn btn-primary" @onclick="ConfirmResetAsync" disabled="@Busy">恢复默认并保存</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private PanelFleetSettingsModel _form = new();
+    private PanelFleetSettingsModel _baseline = new();
+    private PanelFleetSettingsModel? _syncedFrom;
+    private bool _saving;
+    private bool _confirmReset;
+
+    [Parameter, EditorRequired]
+    public PanelFleetSettingsModel Model { get; set; } = new();
+
+    /// <summary>后端返回的字段级校验错误。</summary>
+    [Parameter]
+    public IReadOnlyList<SettingsFieldError> Errors { get; set; } = [];
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    /// <summary>保存请求（组件已完成本地校验，页面负责调用 API）。</summary>
+    [Parameter]
+    public EventCallback<PanelFleetSettingsModel> OnSave { get; set; }
+
+    /// <summary>顶部错误信息（例如网络失败）。</summary>
+    [Parameter]
+    public string? Message { get; set; }
+
+    /// <summary>后端设置视图（提供字段元数据、默认值与来源；为空时使用兜底文案）。</summary>
+    [Parameter]
+    public PanelFleetSettingsView? View { get; set; }
+
+    private static readonly Dictionary<string, string> FieldKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["overviewRefreshSeconds"] = PanelFleetSettingsCatalog.OverviewRefreshIntervalKey,
+        ["resourceRefreshSeconds"] = PanelFleetSettingsCatalog.ResourcesRefreshIntervalKey,
+        ["cacheTtlSeconds"] = PanelFleetSettingsCatalog.ResourcesCacheTtlKey,
+        ["pageSize"] = PanelFleetSettingsCatalog.ResourcesPageSizeKey,
+        ["resourceLimit"] = PanelFleetSettingsCatalog.ResourcesPerNodeLimitKey,
+        ["logLineLimit"] = PanelFleetSettingsCatalog.LogEntryLimitKey,
+        ["terminalSessionTimeoutMinutes"] = PanelFleetSettingsCatalog.TerminalIdleTimeoutKey,
+        ["terminalEnabled"] = PanelFleetSettingsCatalog.TerminalEnabledKey,
+        ["auditRetentionDays"] = PanelFleetSettingsCatalog.AuditRetentionDaysKey,
+    };
+
+    private PanelFleetSettingField? FieldFor(string field) =>
+        View is { } view
+        && FieldKeys.TryGetValue(field, out var key)
+            ? view.Fields.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+    private string Label(string field, string fallback) => FieldFor(field)?.Label ?? fallback;
+
+    private RenderFragment MetaLine(string field) => builder =>
+    {
+        var meta = FieldFor(field);
+        if (meta is null || View is not { } view)
+        {
+            return;
+        }
+
+        var text = meta.Description;
+        var defaultText = PanelFleetSettingsCatalog.FormatValue(view.Defaults, meta.Key);
+        if (!string.IsNullOrWhiteSpace(defaultText))
+        {
+            text += $"（默认 {defaultText}{meta.Unit}）";
+        }
+
+        if (view.Sources.TryGetValue(meta.Key, out var source) && !string.IsNullOrWhiteSpace(source))
+        {
+            text += $" · 来源 {source}";
+        }
+
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "settings-field-hint muted small");
+        builder.AddContent(2, text);
+        builder.CloseElement();
+    };
+
+    private bool CanSave => !Busy && !_saving && IsDirty && !HasLocalError;
+
+    private bool HasLocalError =>
+        _form.OverviewRefreshSeconds is < 5 or > 3600
+        || _form.ResourceRefreshSeconds is < 5 or > 3600
+        || _form.CacheTtlSeconds is < 10 or > 86400
+        || _form.PageSize is < 10 or > 500
+        || _form.ResourceLimit is < 50 or > 10000
+        || _form.LogLineLimit is < 100 or > 20000
+        || _form.TerminalSessionTimeoutMinutes is < 1 or > 480
+        || _form.AuditRetentionDays is < 7 or > 3650;
+
+    private bool IsDirty => !EditableEquals(_form, _baseline);
+
+    private static bool EditableEquals(PanelFleetSettingsModel left, PanelFleetSettingsModel right) =>
+        left.OverviewRefreshSeconds == right.OverviewRefreshSeconds
+        && left.ResourceRefreshSeconds == right.ResourceRefreshSeconds
+        && left.CacheTtlSeconds == right.CacheTtlSeconds
+        && left.PageSize == right.PageSize
+        && left.ResourceLimit == right.ResourceLimit
+        && left.LogLineLimit == right.LogLineLimit
+        && left.TerminalEnabled == right.TerminalEnabled
+        && left.TerminalSessionTimeoutMinutes == right.TerminalSessionTimeoutMinutes
+        && left.AuditRetentionDays == right.AuditRetentionDays;
+
+    protected override void OnParametersSet()
+    {
+        // 仅当页面换了一份模型（首次加载/重新拉取）时同步草稿，避免覆盖用户正在编辑的内容。
+        if (!ReferenceEquals(_syncedFrom, Model))
+        {
+            _syncedFrom = Model;
+            _form = Model.Clone();
+            _baseline = Model.Clone();
+        }
+    }
+
+    private void ResetRequested() => _confirmReset = true;
+
+    private void CancelReset() => _confirmReset = false;
+
+    private async Task ConfirmResetAsync()
+    {
+        _confirmReset = false;
+        var defaults = new PanelFleetSettingsModel
+        {
+            DataDirectory = _form.DataDirectory,
+            ListenUrl = _form.ListenUrl,
+            OidcAuthority = _form.OidcAuthority,
+            OidcClientId = _form.OidcClientId,
+            NodeCount = _form.NodeCount,
+            Version = _form.Version,
+            CurrentTheme = _form.CurrentTheme
+        };
+        _form = defaults;
+        await SaveInternalAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!CanSave || HasLocalError)
+        {
+            return;
+        }
+
+        await SaveInternalAsync();
+    }
+
+    private async Task SaveInternalAsync()
+    {
+        if (Busy)
+        {
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            await OnSave.InvokeAsync(_form.Clone());
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private string? ErrorFor(string field) =>
+        Errors.FirstOrDefault(error => string.Equals(error.Field, field, StringComparison.OrdinalIgnoreCase))?.Message;
+
+    private static string ValueOrDash(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private RenderFragment FieldError(string field) => builder =>
+    {
+        var message = ErrorFor(field);
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "field-error");
+        builder.AddContent(2, message);
+        builder.CloseElement();
+    };
+}

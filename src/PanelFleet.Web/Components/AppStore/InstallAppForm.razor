@@ -1,0 +1,452 @@
+@using System.Globalization
+@using System.Text.Json.Nodes
+@using PanelFleet.Application.AppStore
+
+@if (Detail is null)
+{
+    <p class="muted small">正在加载应用详情…</p>
+}
+else
+{
+    <div class="install-form">
+        <div class="install-form-head">
+            <h2>安装 @Detail.Name</h2>
+            <span class="muted small">应用 key：@Detail.Key</span>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(Detail.ShortDescZh))
+        {
+            <p class="muted small install-form-desc">@Detail.ShortDescZh</p>
+        }
+
+        <div class="form-row">
+            <label class="form-label">安装名称 <span class="required">*</span></label>
+            <input @bind="_name" @bind:event="oninput" disabled="@Busy" maxlength="64" placeholder="容器名称，字母/数字/-/_/." />
+            <span class="muted small">将作为容器名与安装目录名，必须以字母或数字开头。</span>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">版本 <span class="required">*</span></label>
+            <select value="@Detail.Version" @onchange="OnVersionChangedAsync" disabled="@Busy">
+                @foreach (var version in Detail.Versions)
+                {
+                    <option value="@version" selected="@(version == Detail.Version)">@version</option>
+                }
+            </select>
+        </div>
+
+        @if (Detail.HostMode)
+        {
+            <div class="alert alert-warn">该应用使用 host 网络模式，端口与端口映射不可自定义。</div>
+        }
+
+        @if (Detail.RequiresMemory)
+        {
+            <div class="alert alert-warn">官方建议至少为该应用分配更多内存，请参考应用说明。</div>
+        }
+
+        @foreach (var field in Detail.FormFields)
+        {
+            <div class="form-row">
+                <label class="form-label">
+                    @field.LabelZh
+                    @if (field.Required)
+                    {
+                        <span class="required">*</span>
+                    }
+                    <span class="muted small">@field.EnvKey</span>
+                </label>
+                @if (string.Equals(field.Type, "select", StringComparison.OrdinalIgnoreCase) && field.Options.Count > 0)
+                {
+                    <select value="@ValueText(field)" @onchange="e => SetText(field, e.Value?.ToString())" disabled="@Busy">
+                        @if (!field.Required)
+                        {
+                            <option value="">请选择</option>
+                        }
+                        @foreach (var option in field.Options)
+                        {
+                            <option value="@option.Value" selected="@(option.Value == ValueText(field))">@option.Label</option>
+                        }
+                    </select>
+                }
+                else if (IsBoolean(field))
+                {
+                    <label class="checkbox-inline">
+                        <input type="checkbox"
+                               checked="@GetBoolean(field)"
+                               @onchange="e => _values[field.EnvKey] = e.Value is bool value && value"
+                               disabled="@Busy" />
+                        <span>启用</span>
+                    </label>
+                }
+                else if (string.Equals(field.Type, "password", StringComparison.OrdinalIgnoreCase))
+                {
+                    <input type="password"
+                           value="@ValueText(field)"
+                           @onchange="e => SetText(field, e.Value?.ToString())"
+                           disabled="@Busy"
+                           autocomplete="new-password" />
+                }
+                else if (string.Equals(field.Type, "number", StringComparison.OrdinalIgnoreCase))
+                {
+                    <input type="number"
+                           value="@ValueText(field)"
+                           @onchange="e => SetText(field, e.Value?.ToString())"
+                           disabled="@Busy" />
+                }
+                else
+                {
+                    <input value="@ValueText(field)"
+                           @onchange="e => SetText(field, e.Value?.ToString())"
+                           disabled="@Busy" />
+                }
+                @if (!string.IsNullOrWhiteSpace(field.Rule))
+                {
+                    <span class="muted small">校验规则：@field.Rule</span>
+                }
+            </div>
+        }
+
+        <div class="form-row checkbox-row">
+            <label class="checkbox-inline">
+                <input type="checkbox" checked="@_advanced" @onchange="e => _advanced = e.Value is bool value && value" disabled="@Busy" />
+                <span>高级配置（CPU/内存/容器名/重启策略）</span>
+            </label>
+        </div>
+
+        @if (_advanced)
+        {
+            <div class="install-advanced">
+                <div class="form-row">
+                    <label class="form-label">容器名称</label>
+                    <input @bind="_containerName" disabled="@Busy" placeholder="留空使用默认名称" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">CPU 限额（核）</label>
+                    <input type="number" step="0.1" min="0" @bind="_cpuQuota" disabled="@Busy" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">内存限额</label>
+                    <div class="inline-limits">
+                        <input type="number" min="0" @bind="_memoryLimit" disabled="@Busy" />
+                        <select @bind="_memoryUnit" disabled="@Busy">
+                            <option value="M">MB</option>
+                            <option value="G">GB</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label">重启策略</label>
+                    <select @bind="_restartPolicy" disabled="@Busy">
+                        <option value="always">always</option>
+                        <option value="unless-stopped">unless-stopped</option>
+                        <option value="on-failure">on-failure</option>
+                        <option value="no">no</option>
+                    </select>
+                </div>
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline">
+                        <input type="checkbox" @bind="_allowPort" disabled="@Busy" />
+                        <span>允许端口外部访问（allowPort）</span>
+                    </label>
+                </div>
+                @if (_allowPort)
+                {
+                    <div class="form-row">
+                        <label class="form-label">绑定 IP（可选）</label>
+                        <input @bind="_specifyIp" disabled="@Busy" placeholder="如 0.0.0.0，留空使用默认" />
+                    </div>
+                }
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline">
+                        <input type="checkbox" @bind="_pullImage" disabled="@Busy" />
+                        <span>安装前拉取镜像</span>
+                    </label>
+                </div>
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline">
+                        <input type="checkbox" @bind="_editCompose" disabled="@Busy" />
+                        <span>自定义 docker-compose</span>
+                    </label>
+                </div>
+                @if (_editCompose)
+                {
+                    <div class="form-row">
+                        <textarea rows="8" @bind="_dockerCompose" disabled="@Busy" spellcheck="false"></textarea>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (!NodeReady)
+        {
+            <div class="alert alert-warn">请先选择目标节点，再填写并提交安装参数。</div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        <div class="install-form-actions">
+            <button type="button" class="btn" @onclick="ResetAsync" disabled="@Busy">重置</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@(Busy || !NodeReady)">
+                @(Busy ? "处理中…" : "安装（预览确认后执行）")
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
+    private string _name = string.Empty;
+    private bool _advanced;
+    private double _cpuQuota;
+    private long _memoryLimit;
+    private string _memoryUnit = "M";
+    private string? _containerName;
+    private bool _allowPort;
+    private string? _specifyIp;
+    private string _restartPolicy = "always";
+    private bool _pullImage = true;
+    private bool _editCompose;
+    private string? _dockerCompose;
+    private string? _error;
+    private long _loadedDetailId;
+    private string? _loadedAppKey;
+
+    [Parameter]
+    public AppStoreDetail? Detail { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    /// <summary>目标节点已选择（安装流程第一步完成）时为 true，未选择时禁用提交。</summary>
+    [Parameter]
+    public bool NodeReady { get; set; } = true;
+
+    [Parameter]
+    public EventCallback<string> OnVersionChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<AppInstallFormResult> OnSubmit { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (Detail is null)
+        {
+            return;
+        }
+
+        var appChanged = !string.Equals(_loadedAppKey, Detail.Key, StringComparison.Ordinal);
+        var versionChanged = _loadedDetailId != Detail.DetailId;
+
+        if (appChanged)
+        {
+            _loadedAppKey = Detail.Key;
+            _name = Detail.Key;
+            ResetAdvanced();
+        }
+
+        if (appChanged || versionChanged)
+        {
+            _loadedDetailId = Detail.DetailId;
+            RebuildValues(Detail);
+        }
+    }
+
+    private void RebuildValues(AppStoreDetail detail)
+    {
+        _values.Clear();
+        foreach (var field in detail.FormFields)
+        {
+            _values[field.EnvKey] = ConvertDefault(field);
+        }
+    }
+
+    private void ResetAdvanced()
+    {
+        _advanced = false;
+        _cpuQuota = 0;
+        _memoryLimit = 0;
+        _memoryUnit = "M";
+        _containerName = null;
+        _allowPort = false;
+        _specifyIp = null;
+        _restartPolicy = "always";
+        _pullImage = true;
+        _editCompose = false;
+        _dockerCompose = null;
+    }
+
+    private static object? ConvertDefault(AppFormField field)
+    {
+        var text = field.DefaultValue;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return IsBoolean(field) ? false : string.Empty;
+        }
+
+        if (IsBoolean(field))
+        {
+            return bool.TryParse(text, out var boolean) && boolean;
+        }
+
+        if (string.Equals(field.Type, "number", StringComparison.OrdinalIgnoreCase))
+        {
+            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer))
+            {
+                return integer;
+            }
+
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) ? number : 0L;
+        }
+
+        return text;
+    }
+
+    private static bool IsBoolean(AppFormField field) =>
+        field.Type is "switch" or "bool" or "boolean";
+
+    private string ValueText(AppFormField field) =>
+        _values.TryGetValue(field.EnvKey, out var value) && value is not null
+            ? value switch
+            {
+                string text => text,
+                bool boolean => boolean ? "true" : "false",
+                IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+                _ => value.ToString() ?? string.Empty
+            }
+            : string.Empty;
+
+    private bool GetBoolean(AppFormField field) =>
+        _values.TryGetValue(field.EnvKey, out var value) && value is bool boolean && boolean;
+
+    private void SetText(AppFormField field, string? text)
+    {
+        var value = text ?? string.Empty;
+        if (IsBoolean(field))
+        {
+            _values[field.EnvKey] = bool.TryParse(value, out var boolean) && boolean;
+            return;
+        }
+
+        if (string.Equals(field.Type, "number", StringComparison.OrdinalIgnoreCase))
+        {
+            if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer))
+            {
+                _values[field.EnvKey] = integer;
+            }
+            else if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
+            {
+                _values[field.EnvKey] = number;
+            }
+            else
+            {
+                _values[field.EnvKey] = 0L;
+            }
+
+            return;
+        }
+
+        _values[field.EnvKey] = value;
+    }
+
+    private async Task OnVersionChangedAsync(ChangeEventArgs args)
+    {
+        var version = args.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(version) || Detail is null || version == Detail.Version)
+        {
+            return;
+        }
+
+        await OnVersionChanged.InvokeAsync(version);
+    }
+
+    private async Task ResetAsync()
+    {
+        _error = null;
+        if (Detail is null)
+        {
+            return;
+        }
+
+        _loadedAppKey = Detail.Key;
+        _loadedDetailId = Detail.DetailId;
+        _name = Detail.Key;
+        ResetAdvanced();
+        RebuildValues(Detail);
+        await Task.CompletedTask;
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (!NodeReady)
+        {
+            _error = "请先选择目标节点。";
+            return;
+        }
+
+        if (Detail is null)
+        {
+            return;
+        }
+
+        var name = (_name ?? string.Empty).Trim();
+        if (name.Length == 0)
+        {
+            _error = "请填写安装名称。";
+            return;
+        }
+
+        foreach (var field in Detail.FormFields)
+        {
+            if (field.Required && string.IsNullOrWhiteSpace(ValueText(field)))
+            {
+                _error = $"请填写必填参数：{field.LabelZh}";
+                return;
+            }
+        }
+
+        if (_editCompose && string.IsNullOrWhiteSpace(_dockerCompose))
+        {
+            _error = "已勾选自定义编排，但 docker-compose 内容为空。";
+            return;
+        }
+
+        var parameters = new JsonObject();
+        foreach (var pair in _values)
+        {
+            parameters[pair.Key] = ToNode(pair.Value);
+        }
+
+        await OnSubmit.InvokeAsync(new AppInstallFormResult(
+            name,
+            Detail.Version,
+            Detail.DetailId,
+            Detail.Key,
+            Detail.Name,
+            parameters,
+            _cpuQuota,
+            _memoryLimit,
+            _memoryUnit,
+            string.IsNullOrWhiteSpace(_containerName) ? null : _containerName.Trim(),
+            _allowPort,
+            string.IsNullOrWhiteSpace(_specifyIp) ? null : _specifyIp.Trim(),
+            _restartPolicy,
+            _pullImage,
+            _editCompose,
+            _editCompose ? _dockerCompose : null));
+    }
+
+    private static JsonNode? ToNode(object? value) => value switch
+    {
+        null => null,
+        string text => JsonValue.Create(text),
+        bool boolean => JsonValue.Create(boolean),
+        long integer => JsonValue.Create(integer),
+        double number => JsonValue.Create(number),
+        _ => JsonValue.Create(value.ToString())
+    };
+}

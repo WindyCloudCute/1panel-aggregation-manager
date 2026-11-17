@@ -1,0 +1,195 @@
+@using PanelFleet.Application.Databases
+@using PanelFleet.Web.Components.Databases
+
+<div class="modal-backdrop" @onclick="OnCancel">
+    <div class="modal" style="max-width: 620px;" @onclick:stopPropagation="true">
+        <h2>新建数据库 · @DatabaseEngines.DisplayName(Engine)</h2>
+        <p class="muted small">实例 @Instance（@(string.Equals(From, "local", StringComparison.OrdinalIgnoreCase) ? "本地/应用实例" : "远程实例")）</p>
+
+        <div class="form-row">
+            <label>数据库名称</label>
+            <input @bind="_name" placeholder="例如 app_data" autocomplete="off" />
+        </div>
+        <div class="form-row">
+            <label>描述</label>
+            <input @bind="_description" placeholder="可选，最多 256 字符" autocomplete="off" />
+        </div>
+
+        @if (Engine is DatabaseEngine.MySql or DatabaseEngine.PostgreSql)
+        {
+            <div class="form-row">
+                <label>字符集</label>
+                @if (Engine == DatabaseEngine.MySql)
+                {
+                    <select @bind="_format">
+                        <option value="utf8mb4">utf8mb4（推荐）</option>
+                        <option value="utf8mb3">utf8mb3</option>
+                        <option value="latin1">latin1</option>
+                        <option value="gbk">gbk</option>
+                    </select>
+                }
+                else
+                {
+                    <input @bind="_format" placeholder="utf8" />
+                }
+            </div>
+            @if (Engine == DatabaseEngine.MySql)
+            {
+                <div class="form-row">
+                    <label>排序规则</label>
+                    @if (Collations.Count > 0)
+                    {
+                        <select @bind="_collation">
+                            @foreach (var collation in Collations)
+                            {
+                                <option value="@collation">@collation</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <input @bind="_collation" placeholder="utf8mb4_general_ci" />
+                    }
+                </div>
+            }
+        }
+
+        <h3 class="dialog-section">数据库账号（可选，留空则不创建用户）</h3>
+        <div class="form-row">
+            <label>用户名</label>
+            <input @bind="_username" autocomplete="off" placeholder="例如 app_user" />
+        </div>
+        <div class="form-row">
+            <label>密码</label>
+            <input type="password" @bind="_password" autocomplete="new-password" placeholder="仅传输，不落审计/日志" />
+        </div>
+        <div class="form-row">
+            <label>访问范围（主机）</label>
+            @if (Engine == DatabaseEngine.MongoDb)
+            {
+                <select @bind="_permission">
+                    <option value="readWrite">readWrite（推荐）</option>
+                    <option value="read">read</option>
+                    <option value="dbOwner">dbOwner</option>
+                    <option value="userAdmin">userAdmin</option>
+                </select>
+            }
+            else
+            {
+                <input @bind="_permission" placeholder="%（全部主机） / localhost / 自定义 IP" />
+            }
+        </div>
+        @if (Engine == DatabaseEngine.PostgreSql)
+        {
+            <div class="form-row checkbox-row">
+                <label><input type="checkbox" @bind="_superUser" /> 超级用户（superUser）</label>
+            </div>
+        }
+
+        @if (_error is not null)
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        <div class="actions">
+            <button type="button" class="btn" @onclick="OnCancel">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync">下一步：预览确认</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _name = string.Empty;
+    private string _description = string.Empty;
+    private string _format = string.Empty;
+    private string _collation = string.Empty;
+    private string _username = string.Empty;
+    private string _password = string.Empty;
+    private string _permission = string.Empty;
+    private bool _superUser;
+    private string? _error;
+
+    [Parameter, EditorRequired]
+    public DatabaseEngine Engine { get; set; }
+
+    [Parameter, EditorRequired]
+    public string Instance { get; set; } = string.Empty;
+
+    [Parameter]
+    public string From { get; set; } = string.Empty;
+
+    [Parameter]
+    public IReadOnlyList<DatabaseFormatView> Formats { get; set; } = [];
+
+    [Parameter]
+    public EventCallback<DatabaseCreateForm> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrWhiteSpace(_format))
+        {
+            _format = Engine == DatabaseEngine.PostgreSql ? "utf8" : "utf8mb4";
+        }
+
+        if (string.IsNullOrWhiteSpace(_collation) && Collations.Count > 0)
+        {
+            _collation = Collations[0];
+        }
+
+        if (string.IsNullOrWhiteSpace(_permission))
+        {
+            _permission = Engine == DatabaseEngine.MongoDb ? "readWrite" : "%";
+        }
+    }
+
+    private IReadOnlyList<string> Collations
+    {
+        get
+        {
+            var option = Formats.FirstOrDefault(item => string.Equals(item.Format, _format, StringComparison.OrdinalIgnoreCase));
+            return option?.Collations ?? [];
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            _error = "请填写数据库名称。";
+            return;
+        }
+
+        if (Engine == DatabaseEngine.PostgreSql && string.IsNullOrWhiteSpace(_username))
+        {
+            _error = "PostgreSQL 创建库需要同时创建/绑定数据库用户，请填写用户名。";
+            return;
+        }
+
+        if (Engine == DatabaseEngine.MongoDb && string.IsNullOrWhiteSpace(_username))
+        {
+            _error = "MongoDB 创建库需要数据库用户，请填写用户名。";
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_username) && string.IsNullOrEmpty(_password))
+        {
+            _error = "已填写用户名，请同时填写密码。";
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(new DatabaseCreateForm(
+            _name.Trim(),
+            _format.Trim(),
+            _collation.Trim(),
+            _username.Trim(),
+            _password,
+            string.IsNullOrWhiteSpace(_permission) ? "%" : _permission.Trim(),
+            _superUser,
+            _description.Trim()));
+    }
+}

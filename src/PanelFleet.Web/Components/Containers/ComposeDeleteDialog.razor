@@ -1,0 +1,64 @@
+@using PanelFleet.Application.Containers
+
+@* Compose 删除选项对话框：真正的确认文本（项目名）由 OperationConfirmDialog 收集。 *@
+<div class="modal-backdrop" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="modal compose-delete-modal" @onclick:stopPropagation="true">
+        <h2>删除 Compose 项目</h2>
+        <p class="muted small compose-editor-sub">@Project.Name · @NodeName</p>
+
+        <div class="alert alert-warn">
+            删除会停止并移除该项目的容器，操作不可撤销；随后还需要在确认对话框中输入项目名 <code>@Project.Name</code>。
+        </div>
+
+        <div class="form-row compose-delete-option">
+            <label class="checkbox-inline">
+                <input type="checkbox" @bind="_withFile" disabled="@Busy" />
+                <span>同时删除 Compose 文件（项目目录，其中的配置不可恢复）</span>
+            </label>
+        </div>
+
+        @if (_withFile)
+        {
+            <div class="alert alert-error">
+                已选择删除项目目录：1Panel 会移除该目录下所有文件（含 .env），无法恢复。
+            </div>
+        }
+
+        <div class="form-row compose-delete-option">
+            <label class="checkbox-inline">
+                <input type="checkbox" @bind="_force" disabled="@Busy" />
+                <span>容器停止失败时仍继续删除记录（force）</span>
+            </label>
+        </div>
+
+        <div class="modal-actions">
+            <button type="button" class="btn" @onclick="() => OnCancel.InvokeAsync()" disabled="@Busy">取消</button>
+            <button type="button" class="btn btn-danger" @onclick="SubmitAsync" disabled="@Busy">删除（预览确认后执行）</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool _withFile;
+    private bool _force;
+
+    [Parameter, EditorRequired]
+    public ComposeProjectRow Project { get; set; } = null!;
+
+    [Parameter]
+    public string? NodeName { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<ComposeDeleteResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private Task SubmitAsync() =>
+        OnSubmit.InvokeAsync(new ComposeDeleteResult(Project.Name, Project.Path, _withFile, _force));
+
+    public sealed record ComposeDeleteResult(string Name, string Path, bool WithFile, bool Force);
+}

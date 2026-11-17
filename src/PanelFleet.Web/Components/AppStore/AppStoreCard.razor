@@ -1,0 +1,45 @@
+@using PanelFleet.Application.AppStore
+
+<div class="app-store-card @(Selected ? "selected" : null)">
+    <div class="app-store-card-head">
+        <span class="app-store-name">@App.Name</span>
+        @if (App.Installed)
+        {
+            <span class="badge badge-ok">已安装</span>
+        }
+        else if (App.Recommend > 0)
+        {
+            <span class="badge badge-warn">推荐</span>
+        }
+    </div>
+    <div class="app-store-key muted small">@App.Key · @App.Type</div>
+    <p class="app-store-desc">@(string.IsNullOrWhiteSpace(App.Description) ? "暂无描述" : App.Description)</p>
+    <div class="app-store-tags">
+        @foreach (var tag in App.Tags)
+        {
+            <span class="badge badge-unknown">@tag</span>
+        }
+        @if (App.GpuSupport)
+        {
+            <span class="badge badge-warn">GPU</span>
+        }
+    </div>
+    <div class="app-store-card-actions">
+        <button type="button" class="btn" @onclick="() => OnDetail.InvokeAsync(App)">详情</button>
+        <button type="button" class="btn btn-primary" @onclick="() => OnInstall.InvokeAsync(App)">安装</button>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public AppStoreItem App { get; set; } = null!;
+
+    [Parameter]
+    public bool Selected { get; set; }
+
+    [Parameter]
+    public EventCallback<AppStoreItem> OnDetail { get; set; }
+
+    [Parameter]
+    public EventCallback<AppStoreItem> OnInstall { get; set; }
+}

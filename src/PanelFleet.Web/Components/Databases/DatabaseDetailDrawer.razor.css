@@ -1,0 +1,13 @@
+.db-detail-drawer {
+    width: min(620px, 96vw);
+}
+
+.db-detail-drawer .detail-fields th {
+    width: 140px;
+    white-space: nowrap;
+    vertical-align: top;
+}
+
+.db-detail-drawer .detail-fields td {
+    word-break: break-word;
+}

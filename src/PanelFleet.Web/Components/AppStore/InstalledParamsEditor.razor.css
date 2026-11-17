@@ -1,0 +1,73 @@
+.params-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.params-editor-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.params-editor-head h2 {
+    margin: 0;
+}
+
+.form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-label {
+    font-weight: 600;
+    color: #374151;
+}
+
+.form-label .muted {
+    font-weight: 400;
+    margin-left: 6px;
+}
+
+.required {
+    color: var(--error);
+}
+
+.checkbox-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.checkbox-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-inline input {
+    min-width: auto;
+}
+
+.inline-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.params-advanced {
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.params-editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}

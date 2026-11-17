@@ -1,0 +1,21 @@
+/* 面板更新：升级风险提示（scoped CSS，需 App.razor 引用 PanelFleet.Web.styles.css） */
+
+.update-risk-notice {
+    margin-bottom: 1rem;
+    border-radius: var(--radius-lg, 16px);
+}
+
+.update-risk-title {
+    margin: 0 0 0.4rem;
+    font-size: 1rem;
+}
+
+.update-risk-list {
+    margin: 0 0 0.4rem;
+    padding-left: 1.2rem;
+    line-height: 1.7;
+}
+
+.update-risk-list strong {
+    color: var(--warn, #92400e);
+}

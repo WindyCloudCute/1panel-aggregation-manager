@@ -1,0 +1,19 @@
+@* 系统日志两栏骨架：左侧节点/日志类型树，右侧过滤与日志结果。 *@
+<div class="logs-layout">
+    <aside class="logs-tree-panel" aria-label="节点与日志类型导航">
+        @Tree
+    </aside>
+    <section class="logs-main" aria-label="日志工作区">
+        @ChildContent
+    </section>
+</div>
+
+@code {
+    /// <summary>左树区域内容（树 + 标题 + 提示）。</summary>
+    [Parameter]
+    public RenderFragment? Tree { get; set; }
+
+    /// <summary>右侧工作区内容。</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

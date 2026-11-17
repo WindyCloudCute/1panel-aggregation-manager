@@ -1,0 +1,24 @@
+/* 面板更新工作台布局：左树固定宽度，右侧版本表格自适应。 */
+
+.update-workbench {
+    display: grid;
+    grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.update-workbench-tree {
+    position: sticky;
+    top: 16px;
+    min-width: 0;
+}
+
+@media (max-width: 1024px) {
+    .update-workbench {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .update-workbench-tree {
+        position: static;
+    }
+}

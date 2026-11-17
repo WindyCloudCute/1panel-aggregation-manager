@@ -1,0 +1,219 @@
+@page "/nodes"
+@attribute [Authorize]
+@inject INodeService NodeService
+@inject IActorProvider Actors
+@inject NavigationManager Navigation
+
+<PageTitle>节点</PageTitle>
+
+<PageShell>
+    <div class="page-header">
+        <h1>节点</h1>
+        <a class="btn btn-primary" href="/nodes/new">添加节点</a>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="alert alert-error">@_error</div>
+    }
+
+    @if (_nodes is null)
+    {
+        <StatePanel Tone="loading"
+                    Title="正在加载节点…"
+                    Description="读取本机保存的 1Panel 接入配置。" />
+    }
+    else if (_nodes.Count == 0)
+    {
+        <StatePanel Tone="neutral"
+                    Title="还没有节点"
+                    Description="接入第一台 1Panel 节点后，总览与资源清单就会显示它的数据。">
+            <a class="btn btn-primary" href="/nodes/new">添加节点</a>
+        </StatePanel>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>状态</th>
+                        <th>名称</th>
+                        <th>地址</th>
+                        <th>分组</th>
+                        <th>版本</th>
+                        <th>Key</th>
+                        <th>最近检查</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var node in _nodes)
+                    {
+                        <tr>
+                            <td><HealthBadge Health="node.Health" /></td>
+                            <td>@node.Name</td>
+                            <td class="muted">@node.BaseUrl</td>
+                            <td>@(node.GroupName ?? "-")</td>
+                            <td>@(node.PanelVersion ?? "-")</td>
+                            <td class="muted">****@node.ApiKeyHint</td>
+                            <td class="muted">@FormatTime(node.LastCheckedAt)</td>
+                            <td class="actions">
+                                <a class="link-button" href="/nodes/@(node.Id.Value)/edit">编辑</a>
+                                <button type="button" class="link-button" @onclick="() => TestAsync(node)" disabled="@_busy">测试</button>
+                                <button type="button" class="link-button danger" @onclick="() => _pendingDelete = node" disabled="@_busy">删除</button>
+                            </td>
+                        </tr>
+
+                        @if (_testResults.TryGetValue(node.Id.Value, out var result))
+                        {
+                            <tr class="node-test-row">
+                                <td colspan="8">
+                                    <NodeTestResultView Result="result" />
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (_pendingDelete is not null)
+    {
+        <div class="modal-backdrop" @onclick="() => _pendingDelete = null">
+            <div class="modal" @onclick:stopPropagation="true">
+                <h2>确认删除</h2>
+                <p>确定删除节点 <strong>@_pendingDelete.Name</strong>？该操作只删除本工具的接入信息，不影响 1Panel 本身。</p>
+                <div class="actions">
+                    <button type="button" class="btn" @onclick="() => _pendingDelete = null">取消</button>
+                    <button type="button" class="btn btn-danger" @onclick="ConfirmDeleteAsync" disabled="@_busy">删除</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="card">
+        <h2>分组</h2>
+        @if (_groups.Count > 0)
+        {
+            <ul class="plain-list">
+                @foreach (var group in _groups)
+                {
+                    <li>@group.Name</li>
+                }
+            </ul>
+        }
+        else
+        {
+            <p class="muted">还没有分组。</p>
+        }
+        <div class="inline-form">
+            <input @bind="_newGroupName" placeholder="新分组名称" />
+            <button type="button" class="btn" @onclick="CreateGroupAsync" disabled="@_busy">添加分组</button>
+        </div>
+    </div>
+</PageShell>
+
+@code {
+    private IReadOnlyList<NodeSummary>? _nodes;
+    private IReadOnlyList<NodeGroupSummary> _groups = [];
+    private readonly Dictionary<Guid, NodeTestResult> _testResults = new();
+    private NodeSummary? _pendingDelete;
+    private string? _newGroupName;
+    private string? _error;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _nodes = await NodeService.ListAsync(default);
+            _groups = await NodeService.ListGroupsAsync(default);
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+    }
+
+    private async Task TestAsync(NodeSummary node)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var actor = await Actors.GetAsync();
+            _testResults[node.Id.Value] = await NodeService.TestSavedAsync(node.Id, actor, default);
+            _nodes = await NodeService.ListAsync(default);
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_pendingDelete is null)
+        {
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+        try
+        {
+            var actor = await Actors.GetAsync();
+            await NodeService.DeleteAsync(_pendingDelete.Id, actor, default);
+            _pendingDelete = null;
+            await LoadAsync();
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CreateGroupAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newGroupName))
+        {
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+        try
+        {
+            var actor = await Actors.GetAsync();
+            await NodeService.CreateGroupAsync(new GroupCreateRequest(_newGroupName), actor, default);
+            _newGroupName = null;
+            _groups = await NodeService.ListGroupsAsync(default);
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string FormatTime(DateTimeOffset? value) =>
+        value is { } time ? time.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "-";
+}

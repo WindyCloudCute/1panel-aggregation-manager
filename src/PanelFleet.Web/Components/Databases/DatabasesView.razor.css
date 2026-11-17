@@ -1,0 +1,117 @@
+/* 数据库管理：左树 + 右详情工作台。树由通用 NavTree 渲染，页面只负责映射与布局。 */
+
+.db-layout {
+    display: grid;
+    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.db-tree {
+    position: sticky;
+    top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    max-height: calc(100vh - 220px);
+    overflow: auto;
+    padding-bottom: 4px;
+}
+
+.db-tree-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 6px;
+    font-size: 13px;
+}
+
+.db-tree-refreshing {
+    margin: 0 6px;
+}
+
+.db-placeholder {
+    min-height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-lg, 16px);
+}
+
+.operation-error {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.operation-panel {
+    margin-top: 12px;
+}
+
+/* 加载骨架：首屏采集数据库实例时占位，避免出现空白跳动。 */
+.db-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 10px 4px;
+}
+
+.db-skeleton-line {
+    height: 16px;
+    border-radius: var(--radius-sm, 8px);
+    background: var(--panel-hover, rgba(15, 23, 42, 0.08));
+    animation: db-skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.db-skeleton-lg {
+    height: 22px;
+    width: 62%;
+}
+
+.db-skeleton-sm {
+    width: 42%;
+}
+
+@keyframes db-skeleton-pulse {
+    0%,
+    100% {
+        opacity: 0.55;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+/* 按钮按压反馈（全局按钮样式在 app.css，本页仅补触感）。 */
+.page-header .btn:active,
+.db-layout .btn:active {
+    transform: scale(0.97);
+}
+
+@media (max-width: 1024px) {
+    .db-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .db-tree {
+        position: static;
+        max-height: none;
+        overflow: visible;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .db-skeleton-line {
+        animation: none;
+    }
+
+    .page-header .btn:active,
+    .db-layout .btn:active {
+        transform: none;
+    }
+}

@@ -1,0 +1,33 @@
+.ssl-request-dialog {
+    width: min(600px, calc(100vw - 32px));
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ssl-request-dialog h2 {
+    margin: 0;
+}
+
+.ssl-request-dialog > p {
+    margin: 0;
+}
+
+.ssl-request-dialog textarea {
+    min-height: 56px;
+    resize: vertical;
+}
+
+.ssl-request-dialog .modal-actions {
+    margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+    .ssl-request-dialog {
+        width: calc(100vw - 16px);
+        max-height: calc(100vh - 24px);
+        padding: 16px;
+    }
+}

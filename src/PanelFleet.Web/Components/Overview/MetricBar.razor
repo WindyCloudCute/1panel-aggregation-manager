@@ -1,0 +1,36 @@
+@using System.Globalization
+@using PanelFleet.Application.Models
+
+<div class="metric-bar">
+    <div class="metric-bar-head">
+        <span>@Label</span>
+        <span class="metric-bar-text">@Text</span>
+    </div>
+    <div class="metric-bar-track">
+        <div class="metric-bar-fill @ToneClass" style="width:@WidthText%"></div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    [Parameter]
+    public double? Percent { get; set; }
+
+    [Parameter]
+    public string? Text { get; set; }
+
+    private double Width => Percent is null ? 0d : Math.Clamp(Percent.Value, 0d, 100d);
+
+    private string WidthText => Width.ToString("0.##", CultureInfo.InvariantCulture);
+
+    /// <summary>阈值色调：≥90% 危险、≥75% 警告，其余正常；无数据显示为浅色轨道。</summary>
+    private string ToneClass => Percent switch
+    {
+        null => "is-muted",
+        >= 90d => "is-danger",
+        >= 75d => "is-warn",
+        _ => "is-normal"
+    };
+}

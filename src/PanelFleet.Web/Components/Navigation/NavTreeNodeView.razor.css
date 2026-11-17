@@ -1,0 +1,194 @@
+/* 通用导航树节点：叶子 / 分支 / 选中 / 展开动画 */
+
+.nav-tree-item {
+    display: block;
+}
+
+/* ---------- 分支 ---------- */
+
+.nav-tree-branch-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border-radius: var(--radius-md, 10px);
+    transition: background .15s ease, color .15s ease;
+}
+
+.nav-tree-branch-row:hover {
+    background: var(--panel-hover, rgba(15, 23, 42, .04));
+}
+
+.nav-tree-branch-row.is-selected {
+    background: var(--primary-soft, rgba(37, 99, 235, .10));
+}
+
+.nav-tree-branch-row.is-disabled {
+    opacity: .55;
+}
+
+.nav-tree-toggle {
+    flex: 0 0 26px;
+    width: 26px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    color: var(--muted);
+    border-radius: var(--radius-sm, 6px);
+}
+
+.nav-tree-toggle:hover {
+    color: var(--text);
+    background: rgba(15, 23, 42, .06);
+}
+
+.nav-tree-chevron {
+    width: 0;
+    height: 0;
+    border-left: 5px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform .18s cubic-bezier(.2, .8, .2, 1);
+    transform: rotate(0deg);
+}
+
+.nav-tree-chevron.is-open {
+    transform: rotate(90deg);
+}
+
+.nav-tree-branch-label {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 8px 0 2px;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-md, 10px);
+}
+
+.nav-tree-branch-text,
+.nav-tree-leaf-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.nav-tree-hint {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.nav-tree-error {
+    flex: 0 0 auto;
+    color: var(--error);
+    font-size: 12px;
+    padding-right: 6px;
+}
+
+.nav-tree-spinner {
+    flex: 0 0 auto;
+    width: 12px;
+    height: 12px;
+    margin-right: 8px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: nav-tree-spin .7s linear infinite;
+}
+
+@keyframes nav-tree-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* 展开动画：grid-template-rows 0fr -> 1fr，无 JS */
+.nav-tree-children {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows .22s cubic-bezier(.2, .8, .2, 1);
+}
+
+.nav-tree-children.is-open {
+    grid-template-rows: 1fr;
+}
+
+.nav-tree-children-inner {
+    overflow: hidden;
+    padding-left: 14px;
+}
+
+.nav-tree-children.is-open > .nav-tree-children-inner {
+    animation: nav-tree-fade-in .22s ease-out both;
+}
+
+@keyframes nav-tree-fade-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- 叶子 ---------- */
+
+.nav-tree-leaf {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: var(--radius-md, 10px);
+    color: var(--text);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, transform .12s ease;
+}
+
+.nav-tree-leaf:hover {
+    background: var(--panel-hover, rgba(15, 23, 42, .04));
+    transform: translateX(1px);
+}
+
+.nav-tree-leaf.is-selected {
+    background: var(--primary-soft, rgba(37, 99, 235, .10));
+    border-color: rgba(37, 99, 235, .25);
+    color: var(--primary-dark, var(--primary));
+    font-weight: 600;
+}
+
+.nav-tree-leaf:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+}
+
+.nav-tree-empty-child {
+    padding: 4px 8px 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-tree-chevron,
+    .nav-tree-children,
+    .nav-tree-leaf,
+    .nav-tree-branch-row {
+        transition: none;
+    }
+
+    .nav-tree-children.is-open > .nav-tree-children-inner,
+    .nav-tree-spinner {
+        animation: none;
+    }
+}

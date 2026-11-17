@@ -1,0 +1,859 @@
+@using System.Text.Json.Nodes
+@using PanelFleet.Application.Databases
+@inject IDatabaseService DatabaseService
+@inject INodeService NodeService
+@inject IWriteOperationService WriteOperations
+@inject IActorProvider ActorProvider
+
+<div class="page-header">
+    <h1>数据库管理</h1>
+    <div class="actions">
+        @if (_overview is not null)
+        {
+            <span class="muted small">更新于 @_overview.GeneratedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+        }
+        @if (_loading)
+        {
+            <span class="muted small">加载中…</span>
+        }
+        <button type="button" class="btn btn-primary" @onclick="RefreshAsync" disabled="@_loading">刷新</button>
+    </div>
+</div>
+
+@if (_nodesLoaded && _nodes.Count == 0)
+{
+    <div class="card">
+        <p class="muted">
+            还没有节点，先到 <a href="/nodes/new">添加节点</a> 接入第一台 1Panel，再管理数据库。
+        </p>
+    </div>
+}
+else
+{
+    <div class="resource-toolbar">
+        <label class="toolbar-field">
+            <span class="toolbar-label">节点</span>
+            <select @bind="_nodeFilterValue" @bind:after="ReloadAsync" disabled="@_loading">
+                <option value="">全部节点</option>
+                @foreach (var node in _nodes)
+                {
+                    <option value="@node.Id.Value">@node.Name</option>
+                }
+            </select>
+        </label>
+        <label class="toolbar-field">
+            <span class="toolbar-label">搜索</span>
+            <input class="search-input" placeholder="节点 / 实例 / 库名…" @bind="_searchInput" @bind:event="oninput" />
+        </label>
+        <span class="muted small">按「节点 → 实例 → 库」展示；数据库写操作仅支持单节点。</span>
+    </div>
+
+    @if (_nodesError is not null)
+    {
+        <div class="alert alert-warn">@_nodesError（节点筛选不可用）</div>
+    }
+
+    @if (_error is not null)
+    {
+        <div class="alert alert-error">@_error</div>
+    }
+
+    @if (_loading && _overview is null)
+    {
+        <div class="db-skeleton" aria-busy="true" aria-label="正在采集数据库实例与库列表">
+            <div class="db-skeleton-line db-skeleton-lg"></div>
+            <div class="db-skeleton-line"></div>
+            <div class="db-skeleton-line"></div>
+            <div class="db-skeleton-line db-skeleton-sm"></div>
+        </div>
+    }
+    else if (_overview is not null)
+    {
+        <div class="db-layout">
+            <aside class="db-tree">
+                <NavTree Nodes="TreeNodes"
+                         SelectedId="@SelectedTreeId"
+                         OnSelect="OnTreeSelectAsync"
+                         Searchable="false"
+                         EmptyText="没有匹配的实例或库。"
+                         AriaLabel="数据库实例导航">
+                    <Header>
+                        <div class="db-tree-head">
+                            <strong>数据库节点</strong>
+                            <span class="muted small">@_overview.Nodes.Count 个节点</span>
+                        </div>
+                    </Header>
+                </NavTree>
+                @if (_loading)
+                {
+                    <p class="muted small db-tree-refreshing">正在刷新数据库实例…</p>
+                }
+            </aside>
+
+            <section class="db-detail">
+                @if (_selected is null)
+                {
+                    <div class="card db-placeholder">
+                        <p class="muted">从左侧选择一个数据库实例，查看库列表、用户、授权与连接信息。</p>
+                    </div>
+                }
+                else
+                {
+                    <InstancePanel Instance="_selected"
+                                   Users="_users"
+                                   Grants="_grants"
+                                   Formats="_formats"
+                                   Status="_status"
+                                   Redis="_redis"
+                                   InstanceLoading="_instanceLoading"
+                                   InstanceError="@_instanceError"
+                                   PanelUrl="@_selectedPanelUrl"
+                                   OnRefresh="ReloadSelectedAsync"
+                                   OnCreateDatabase="OpenCreateDatabase"
+                                   OnEditDescription="OpenDescriptionDialog"
+                                   OnDeleteDatabase="DeleteDatabaseAsync"
+                                   OnShowDatabase="OpenDatabaseDetail"
+                                   OnCreateUser="OpenCreateUser"
+                                   OnResetUserPassword="OpenResetPassword"
+                                   OnDeleteUser="DeleteUserAsync"
+                                   OnGrant="OpenGrantDialog"
+                                   OnRevoke="RevokeGrantAsync"
+                                   OnRedisConfig="OpenRedisConfig" />
+                }
+            </section>
+        </div>
+    }
+}
+
+@if (_detailDb is not null)
+{
+    <DatabaseDetailDrawer Database="_detailDb"
+                          Grants="_grants?.Items ?? []"
+                          OnEditDescription="OpenDescriptionDialog"
+                          OnDelete="DeleteDatabaseAsync"
+                          OnClose="CloseDatabaseDetail" />
+}
+
+@if (_operationError is not null)
+{
+    <div class="alert alert-error operation-error">
+        <span>@_operationError</span>
+        <button type="button" class="btn" @onclick="() => _operationError = null">关闭</button>
+    </div>
+}
+
+@if (_deleteLinkedResources is { Count: > 0 })
+{
+    <div class="alert alert-warn">
+        <strong>删除检查：</strong>该库存在 @_deleteLinkedResources.Count 项关联资源：
+        @string.Join("、", _deleteLinkedResources.Select(item => item.Type + ":" + item.Name))
+    </div>
+}
+
+@if (_execution is not null)
+{
+    <div class="card operation-panel">
+        <OperationResultView Execution="_execution" />
+        <div class="actions">
+            <button type="button" class="btn" @onclick="DismissExecution">关闭结果</button>
+        </div>
+    </div>
+}
+
+<OperationConfirmDialog Preview="_preview" Busy="_operationBusy" OnConfirm="ConfirmOperationAsync" OnCancel="CancelOperation" />
+
+@if (_createOpen && _createInstance is not null)
+{
+    <CreateDatabaseDialog Engine="_createInstance.Engine"
+                          Instance="@_createInstance.Instance"
+                          From="@_createInstance.From"
+                          Formats="_formats?.Items ?? []"
+                          OnSubmit="CreateDatabaseAsync"
+                          OnCancel="CloseCreateDialog" />
+}
+
+@if (_descriptionDb is not null)
+{
+    <DatabaseDescriptionDialog DatabaseName="@_descriptionDb.Name"
+                              CurrentDescription="_descriptionDb.Description ?? string.Empty"
+                              OnSubmit="UpdateDescriptionAsync"
+                              OnCancel="CloseDescriptionDialog" />
+}
+
+@if (_userDialogMode is not null)
+{
+    <DatabaseUserDialog Mode="_userDialogMode.Value"
+                        Existing="_userTarget"
+                        AvailableDbs="_selected?.Databases.Select(db => db.Name).ToArray() ?? []"
+                        OnSubmit="SubmitUserAsync"
+                        OnCancel="CloseUserDialog" />
+}
+
+@if (_grantDialogOpen)
+{
+    <DatabaseGrantDialog Dbs="_selected?.Databases.Select(db => db.Name).ToArray() ?? []"
+                         Users="_users?.Items ?? []"
+                         OnSubmit="SubmitGrantAsync"
+                         OnCancel="CloseGrantDialog" />
+}
+
+@if (_redisDialogOpen && _selected is not null)
+{
+    <RedisConfigDialog Instance="@_selected.Instance"
+                       Conf="_redis?.Conf"
+                       OnSubmit="SubmitRedisConfigAsync"
+                       OnCancel="CloseRedisDialog" />
+}
+
+@code {
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private bool _nodesLoaded;
+    private string? _nodesError;
+    private string _nodeFilterValue = string.Empty;
+
+    private DatabaseOverview? _overview;
+    private bool _loading;
+    private string? _error;
+    private string? _searchInput;
+
+    private DatabaseInstanceView? _selected;
+    private DatabaseReadResult<DatabaseUserView>? _users;
+    private DatabaseReadResult<DatabaseGrantView>? _grants;
+    private DatabaseReadResult<DatabaseFormatView>? _formats;
+    private DatabaseStatusView? _status;
+    private DatabaseRedisView? _redis;
+    private bool _instanceLoading;
+    private string? _instanceError;
+
+    private DatabaseDbView? _detailDb;
+    private IReadOnlyList<DatabaseLinkResourceView> _deleteLinkedResources = [];
+
+    private OperationPreview? _preview;
+    private OperationExecution? _execution;
+    private bool _operationBusy;
+    private string? _operationError;
+
+    private bool _createOpen;
+    private DatabaseInstanceView? _createInstance;
+    private DatabaseDbView? _descriptionDb;
+    private DatabaseUserDialogMode? _userDialogMode;
+    private DatabaseUserView? _userTarget;
+    private bool _grantDialogOpen;
+    private DatabaseGrantForm? _pendingGrant;
+    private bool _redisDialogOpen;
+
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cts = new CancellationTokenSource();
+        await LoadNodesAsync();
+        if (_nodesLoaded)
+        {
+            await LoadOverviewAsync();
+        }
+    }
+
+    public void Dispose() => _cts?.Dispose();
+
+    private CancellationToken Token => _cts?.Token ?? CancellationToken.None;
+
+    private Guid? NodeFilter => Guid.TryParse(_nodeFilterValue, out var id) ? id : null;
+
+    private string? _selectedPanelUrl;
+
+    private IReadOnlyList<DatabaseNodeGroup> FilteredNodes =>
+        _overview is null
+            ? []
+            : _overview.Nodes
+                .Where(node => string.IsNullOrWhiteSpace(_searchInput)
+                    || node.NodeName.Contains(_searchInput.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || node.Instances.Any(instance => MatchesFilter(node, instance)))
+                .Select(node => node)
+                .ToArray();
+
+    private async Task LoadNodesAsync()
+    {
+        _nodesError = null;
+        try
+        {
+            _nodes = await NodeService.ListAsync(Token);
+            _nodesLoaded = true;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _nodes = [];
+            _nodesLoaded = false;
+            _nodesError = "节点列表加载失败：" + exception.Message;
+        }
+    }
+
+    private async Task LoadOverviewAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var previous = _selected;
+            _overview = await DatabaseService.GetOverviewAsync(NodeFilter, Token);
+            var candidates = _overview.Nodes
+                .Where(node => node.IsEnabled)
+                .SelectMany(node => node.Instances)
+                .ToArray();
+
+            var match = previous is null
+                ? null
+                : candidates.FirstOrDefault(instance =>
+                    instance.NodeId == previous.NodeId
+                    && instance.Engine == previous.Engine
+                    && string.Equals(instance.Instance, previous.Instance, StringComparison.Ordinal));
+
+            _selected = match ?? candidates.FirstOrDefault();
+            if (_selected is not null)
+            {
+                await LoadInstanceDataAsync(_selected);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _error = "加载数据库失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        await LoadNodesAsync();
+        await LoadOverviewAsync();
+    }
+
+    private async Task RefreshAsync() => await LoadOverviewAsync();
+
+    private bool MatchesFilter(DatabaseNodeGroup node, DatabaseInstanceView instance)
+    {
+        if (string.IsNullOrWhiteSpace(_searchInput))
+        {
+            return true;
+        }
+
+        var keyword = _searchInput.Trim();
+        return instance.Instance.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+            || DatabaseEngines.DisplayName(instance.Engine).Contains(keyword, StringComparison.OrdinalIgnoreCase)
+            || DatabaseEngines.Key(instance.Engine).Contains(keyword, StringComparison.OrdinalIgnoreCase)
+            || instance.Databases.Any(db => db.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string? SelectedTreeId => _selected is null
+        ? null
+        : BuildInstanceId(_selected.NodeId, _selected.Engine, _selected.Instance);
+
+    /// <summary>把「节点 → 引擎 → 实例」映射为通用导航树；搜索框在页面层过滤，树内不再重复过滤。</summary>
+    private IReadOnlyList<NavTreeNode> TreeNodes
+    {
+        get
+        {
+            if (_overview is null)
+            {
+                return [];
+            }
+
+            var nodes = FilteredNodes;
+            if (nodes.Count == 0)
+            {
+                return [];
+            }
+
+            var nodeBranches = new List<NavTreeNode>(nodes.Count);
+            foreach (var node in nodes)
+            {
+                var engineBranches = new List<NavTreeNode>();
+                foreach (var engineGroup in node.Instances
+                    .Where(instance => MatchesFilter(node, instance))
+                    .GroupBy(instance => instance.Engine)
+                    .OrderBy(group => group.Key))
+                {
+                    var instanceLeaves = new List<NavTreeNode>();
+                    foreach (var instance in engineGroup)
+                    {
+                        instanceLeaves.Add(new NavTreeNode
+                        {
+                            Id = BuildInstanceId(instance.NodeId, instance.Engine, instance.Instance),
+                            Label = instance.Instance,
+                            Hint = DescribeInstance(instance),
+                            BadgeText = instance.Error is null ? null : "!",
+                            BadgeClass = instance.Error is null ? null : "badge-warn",
+                            Kind = NavTreeNodeKind.Leaf
+                        });
+                    }
+
+                    engineBranches.Add(new NavTreeNode
+                    {
+                        Id = $"engine:{node.NodeId:N}:{DatabaseEngines.Key(engineGroup.Key)}",
+                        Label = DatabaseEngines.DisplayName(engineGroup.Key),
+                        Hint = $"{instanceLeaves.Count} 个实例",
+                        Kind = NavTreeNodeKind.Branch,
+                        DefaultExpanded = true,
+                        Children = instanceLeaves
+                    });
+                }
+
+                var hint = $"{node.Instances.Count} 实例";
+                if (node.Warnings.Count > 0)
+                {
+                    hint += " · " + string.Join("；", node.Warnings);
+                }
+
+                // 搜索时只保留命中的实例；没有命中实例的节点不显示，避免出现空分支。
+                if (engineBranches.Count == 0 && !string.IsNullOrWhiteSpace(_searchInput))
+                {
+                    continue;
+                }
+
+                nodeBranches.Add(new NavTreeNode
+                {
+                    Id = $"node:{node.NodeId:N}",
+                    Label = node.NodeName,
+                    Hint = hint,
+                    BadgeText = node.IsEnabled ? null : "已禁用",
+                    BadgeClass = node.IsEnabled ? null : "badge-warn",
+                    Kind = NavTreeNodeKind.Branch,
+                    DefaultExpanded = true,
+                    Error = node.Error?.Message,
+                    Children = engineBranches
+                });
+            }
+
+            return
+            [
+                new NavTreeNode
+                {
+                    Id = "root",
+                    Label = "全部节点",
+                    Hint = $"{nodes.Count} 个节点",
+                    Kind = NavTreeNodeKind.Branch,
+                    DefaultExpanded = true,
+                    Children = nodeBranches
+                }
+            ];
+        }
+    }
+
+    private static string BuildInstanceId(Guid nodeId, DatabaseEngine engine, string instance) =>
+        $"db:{nodeId:N}:{DatabaseEngines.Key(engine)}:{instance}";
+
+    private static string DescribeInstance(DatabaseInstanceView instance)
+    {
+        var meta = string.IsNullOrWhiteSpace(instance.From) ? "—" : instance.From;
+        if (DatabaseEngines.IsDatabaseEngine(instance.Engine))
+        {
+            meta += $" · {instance.DatabaseTotal} 库";
+        }
+
+        return meta;
+    }
+
+    private async Task OnTreeSelectAsync(NavTreeNode node)
+    {
+        if (_overview is null || node.Kind != NavTreeNodeKind.Leaf)
+        {
+            return;
+        }
+
+        var match = _overview.Nodes
+            .SelectMany(value => value.Instances)
+            .FirstOrDefault(instance =>
+                string.Equals(BuildInstanceId(instance.NodeId, instance.Engine, instance.Instance), node.Id, StringComparison.Ordinal));
+
+        if (match is not null && !ReferenceEquals(match, _selected))
+        {
+            await SelectInstanceAsync(match);
+        }
+    }
+
+    private async Task SelectInstanceAsync(DatabaseInstanceView instance)
+    {
+        _selected = instance;
+        _detailDb = null;
+        await LoadInstanceDataAsync(instance);
+    }
+
+    private async Task LoadInstanceDataAsync(DatabaseInstanceView instance)
+    {
+        _instanceLoading = true;
+        _instanceError = null;
+        _users = null;
+        _grants = null;
+        _formats = null;
+        _status = null;
+        _redis = null;
+
+        try
+        {
+            if (instance.Engine == DatabaseEngine.MySql)
+            {
+                _users = await DatabaseService.GetUsersAsync(instance.NodeId, instance.Instance, Token);
+                _grants = await DatabaseService.GetGrantsAsync(instance.NodeId, instance.Instance, Token);
+                _formats = await DatabaseService.GetFormatsAsync(instance.NodeId, instance.Instance, Token);
+            }
+
+            if (instance.Engine == DatabaseEngine.Redis)
+            {
+                _redis = await DatabaseService.GetRedisInfoAsync(
+                    instance.NodeId,
+                    instance.Instance,
+                    instance.From,
+                    Token);
+            }
+            else
+            {
+                _status = await DatabaseService.GetStatusAsync(
+                    instance.NodeId,
+                    instance.Engine,
+                    instance.Instance,
+                    instance.From,
+                    Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _instanceError = "实例详情加载失败：" + exception.Message;
+        }
+        finally
+        {
+            _instanceLoading = false;
+            _selectedPanelUrl = BuildPanelUrl(instance.NodeId);
+        }
+    }
+
+    private Task ReloadSelectedAsync() =>
+        _selected is null ? Task.CompletedTask : LoadInstanceDataAsync(_selected);
+
+    private void OpenCreateDatabase(DatabaseInstanceView instance)
+    {
+        _createInstance = instance;
+        _createOpen = true;
+    }
+
+    private void CloseCreateDialog() => _createOpen = false;
+
+    private void OpenDescriptionDialog(DatabaseDbView database) => _descriptionDb = database;
+
+    private void CloseDescriptionDialog() => _descriptionDb = null;
+
+    private void OpenDatabaseDetail(DatabaseDbView database) => _detailDb = database;
+
+    private void CloseDatabaseDetail() => _detailDb = null;
+
+    private void OpenCreateUser()
+    {
+        _userDialogMode = DatabaseUserDialogMode.Create;
+        _userTarget = null;
+    }
+
+    private void OpenResetPassword(DatabaseUserView user)
+    {
+        _userDialogMode = DatabaseUserDialogMode.Password;
+        _userTarget = user;
+    }
+
+    private void CloseUserDialog()
+    {
+        _userDialogMode = null;
+        _userTarget = null;
+    }
+
+    private void OpenGrantDialog()
+    {
+        _grantDialogOpen = true;
+        _pendingGrant = null;
+    }
+
+    private void CloseGrantDialog()
+    {
+        _grantDialogOpen = false;
+        _pendingGrant = null;
+    }
+
+    private void OpenRedisConfig() => _redisDialogOpen = true;
+
+    private void CloseRedisDialog() => _redisDialogOpen = false;
+
+    private async Task CreateDatabaseAsync(DatabaseCreateForm form)
+    {
+        _createOpen = false;
+        if (_createInstance is not { } instance)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject
+        {
+            ["engine"] = DatabaseEngines.Key(instance.Engine),
+            ["instance"] = instance.Instance,
+            ["from"] = string.IsNullOrWhiteSpace(instance.From) ? "remote" : instance.From,
+            ["name"] = form.Name,
+            ["format"] = form.Format,
+            ["collation"] = form.Collation,
+            ["username"] = form.Username,
+            ["password"] = form.Password,
+            ["permission"] = form.Permission,
+            ["superUser"] = form.SuperUser,
+            ["description"] = form.Description
+        };
+
+        await PreviewAsync("database.create", instance.NodeId, parameters);
+    }
+
+    private async Task UpdateDescriptionAsync(string description)
+    {
+        if (_descriptionDb is not { } database)
+        {
+            return;
+        }
+
+        _descriptionDb = null;
+        var parameters = new JsonObject
+        {
+            ["engine"] = DatabaseEngines.Key(database.Engine),
+            ["instance"] = database.Instance,
+            ["id"] = database.Id,
+            ["description"] = description
+        };
+
+        await PreviewAsync("database.description_update", database.NodeId, parameters);
+    }
+
+    private async Task DeleteDatabaseAsync(DatabaseDbView database)
+    {
+        _deleteLinkedResources = [];
+        try
+        {
+            var linked = await DatabaseService.CheckDeleteAsync(
+                database.NodeId,
+                database.Engine,
+                database.Id,
+                database.Instance,
+                Token);
+            _deleteLinkedResources = linked.Items;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            _operationError = "删除前检查失败：" + exception.Message;
+            return;
+        }
+
+        var parameters = new JsonObject
+        {
+            ["engine"] = DatabaseEngines.Key(database.Engine),
+            ["instance"] = database.Instance,
+            ["from"] = database.From,
+            ["id"] = database.Id,
+            ["database"] = database.Name,
+            ["forceDelete"] = false,
+            ["deleteBackup"] = false
+        };
+
+        await PreviewAsync("database.delete", database.NodeId, parameters);
+    }
+
+    private async Task DeleteUserAsync(DatabaseUserView user)
+    {
+        if (_selected is not { } instance)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject
+        {
+            ["instance"] = instance.Instance,
+            ["username"] = user.Username,
+            ["host"] = user.Host
+        };
+
+        await PreviewAsync("database.user_delete", instance.NodeId, parameters);
+    }
+
+    private async Task SubmitUserAsync(DatabaseUserForm form)
+    {
+        if (_selected is not { } instance || _userDialogMode is not { } mode)
+        {
+            return;
+        }
+
+        _userDialogMode = null;
+        _userTarget = null;
+        var parameters = new JsonObject
+        {
+            ["instance"] = instance.Instance,
+            ["username"] = form.Username,
+            ["host"] = string.IsNullOrWhiteSpace(form.Host) ? "%" : form.Host,
+            ["password"] = form.Password
+        };
+
+        if (mode == DatabaseUserDialogMode.Create)
+        {
+            parameters["description"] = form.Description;
+            var dbs = new JsonArray(form.Dbs.Select(db => (JsonNode?)db).ToArray());
+            parameters["dbs"] = dbs;
+            await PreviewAsync("database.user_create", instance.NodeId, parameters);
+        }
+        else
+        {
+            await PreviewAsync("database.user_password", instance.NodeId, parameters);
+        }
+    }
+
+    private async Task SubmitGrantAsync(DatabaseGrantForm form)
+    {
+        if (_selected is not { } instance)
+        {
+            return;
+        }
+
+        _grantDialogOpen = false;
+        _pendingGrant = form;
+        var parameters = new JsonObject
+        {
+            ["instance"] = instance.Instance,
+            ["db"] = form.Db,
+            ["username"] = form.Username,
+            ["host"] = string.IsNullOrWhiteSpace(form.Host) ? "%" : form.Host
+        };
+
+        await PreviewAsync("database.grant", instance.NodeId, parameters);
+    }
+
+    private async Task RevokeGrantAsync(DatabaseGrantView grant)
+    {
+        if (_selected is not { } instance)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject
+        {
+            ["instance"] = instance.Instance,
+            ["db"] = grant.Db,
+            ["username"] = grant.Username,
+            ["host"] = grant.Host
+        };
+
+        await PreviewAsync("database.grant_revoke", instance.NodeId, parameters);
+    }
+
+    private async Task SubmitRedisConfigAsync(RedisConfigForm form)
+    {
+        if (_selected is not { } instance)
+        {
+            return;
+        }
+
+        _redisDialogOpen = false;
+        var parameters = new JsonObject
+        {
+            ["instance"] = instance.Instance,
+            ["dbType"] = "redis",
+            ["timeout"] = form.Timeout,
+            ["maxclients"] = form.Maxclients,
+            ["maxmemory"] = form.Maxmemory
+        };
+
+        await PreviewAsync("redis.config_update", instance.NodeId, parameters);
+    }
+
+    private async Task PreviewAsync(string kind, Guid nodeId, JsonObject parameters)
+    {
+        _operationError = null;
+        _execution = null;
+        _operationBusy = true;
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            var invocation = new OperationInvocation(kind, [new NodeId(nodeId)], parameters);
+            _preview = await WriteOperations.PreviewAsync(invocation, actor, Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "预览操作失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private async Task ConfirmOperationAsync(string? typedConfirmation)
+    {
+        if (_preview is null)
+        {
+            return;
+        }
+
+        _operationBusy = true;
+        _operationError = null;
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            _execution = await WriteOperations.ExecuteAsync(_preview.TokenId, typedConfirmation, actor, Token);
+            _preview = null;
+            await LoadOverviewAsync();
+        }
+        catch (OperationConfirmationException exception)
+        {
+            _operationError = "确认失败：" + exception.Message;
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = "参数校验失败：" + exception.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "执行失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private void CancelOperation() => _preview = null;
+
+    private void DismissExecution() => _execution = null;
+
+    private string? BuildPanelUrl(Guid nodeId)
+    {
+        var node = _nodes.FirstOrDefault(item => item.Id.Value == nodeId);
+        if (node is null)
+        {
+            return null;
+        }
+
+        var root = node.BaseUrl.AbsoluteUri.TrimEnd('/');
+        var entrance = string.IsNullOrWhiteSpace(node.SecurityEntrance)
+            ? string.Empty
+            : "/" + node.SecurityEntrance.Trim('/');
+        return root + entrance + "/databases";
+    }
+}

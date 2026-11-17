@@ -1,0 +1,189 @@
+/* 系统日志两栏布局；颜色只用 app.css 语义令牌，间距/圆角/阴影缺省时带 fallback。 */
+.logs-layout {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.logs-tree-panel {
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 132px);
+    overflow: auto;
+    padding: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg, 16px);
+    box-shadow: var(--shadow-sm, none);
+    transition: border-color var(--dur-fast, 120ms) var(--ease-out, ease);
+}
+
+.logs-tree-panel:hover {
+    border-color: var(--primary-soft, var(--border));
+}
+
+.logs-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+@media (max-width: 1023px) {
+    .logs-layout {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 14px;
+    }
+
+    .logs-tree-panel {
+        position: static;
+        max-height: 300px;
+    }
+}
+
+/* —— 左树标题 —— */
+.logs-layout ::deep .tree-panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.logs-layout ::deep .tree-panel-tip {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    line-height: 1.5;
+}
+
+/* —— 右侧工作区标题 —— */
+.logs-layout ::deep .work-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
+    animation: logs-work-head-in var(--dur, 200ms) var(--ease-out, ease) both;
+}
+
+.logs-layout ::deep .work-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.logs-layout ::deep .work-title h2 {
+    margin: 0;
+    font-size: 1.08rem;
+    line-height: 1.4;
+}
+
+.logs-layout ::deep .work-sub {
+    flex-basis: 100%;
+    line-height: 1.5;
+}
+
+.logs-layout ::deep .work-head .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+/* —— 卡片/面板 —— */
+.logs-layout ::deep .work-card {
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
+}
+
+/* —— 资源选择行 —— */
+.logs-layout ::deep .resource-picker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    background: var(--bg);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm, 8px);
+}
+
+.logs-layout ::deep .resource-picker .form-row {
+    margin: 0;
+}
+
+/* —— 空态 —— */
+.logs-layout ::deep .work-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 40px 16px;
+    text-align: center;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md, 12px);
+}
+
+/* —— 骨架屏 —— */
+.logs-layout ::deep .skeleton-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.logs-layout ::deep .skeleton-row {
+    height: 46px;
+    border-radius: var(--radius-sm, 8px);
+    background: linear-gradient(90deg, var(--bg) 25%, var(--panel-hover, var(--bg)) 37%, var(--bg) 63%);
+    background-size: 400% 100%;
+    animation: logs-skeleton-shimmer 1.4s ease infinite;
+}
+
+@keyframes logs-work-head-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes logs-skeleton-shimmer {
+    0% {
+        background-position: 100% 50%;
+    }
+
+    100% {
+        background-position: 0 50%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .logs-layout ::deep .work-head,
+    .logs-layout ::deep .skeleton-row {
+        animation: none;
+    }
+
+    .logs-layout ::deep .work-head {
+        opacity: 1;
+        transform: none;
+    }
+}

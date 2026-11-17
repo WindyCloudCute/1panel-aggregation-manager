@@ -1,0 +1,145 @@
+@using PanelFleet.Application.Databases
+@using PanelFleet.Web.Components.Databases
+
+<div class="modal-backdrop" @onclick="OnCancel">
+    <div class="modal" style="max-width: 560px;" @onclick:stopPropagation="true">
+        <h2>@(Mode == DatabaseUserDialogMode.Create ? "新建数据库用户" : "重置用户密码")</h2>
+        <p class="muted small">
+            @(Mode == DatabaseUserDialogMode.Create
+                ? "账号创建后立即生效；密码只用于请求传输，不写入审计或日志。"
+                : $"目标账号 {Existing?.Username}@{Existing?.Host}；修改后旧密码立即失效。")
+        </p>
+
+        <div class="form-row">
+            <label>用户名</label>
+            <input @bind="_username" disabled="@(Mode == DatabaseUserDialogMode.Password)" autocomplete="off" />
+        </div>
+        <div class="form-row">
+            <label>主机 / 访问范围</label>
+            <input @bind="_host" disabled="@(Mode == DatabaseUserDialogMode.Password)" placeholder="% / localhost / IP" />
+        </div>
+        <div class="form-row">
+            <label>密码</label>
+            <input type="password" @bind="_password" autocomplete="new-password" placeholder="请输入新密码" />
+        </div>
+
+        @if (Mode == DatabaseUserDialogMode.Create)
+        {
+            <div class="form-row">
+                <label>描述</label>
+                <input @bind="_description" placeholder="可选" autocomplete="off" />
+            </div>
+            <div class="form-row">
+                <label>授予数据库（可多选，可留空）</label>
+                @if (AvailableDbs.Count == 0)
+                {
+                    <span class="muted small">该实例下暂无可授权的数据库。</span>
+                }
+                else
+                {
+                    <div class="db-checkbox-list">
+                        @foreach (var db in AvailableDbs)
+                        {
+                            <label class="checkbox-row">
+                                <input type="checkbox"
+                                       checked="@_selectedDbs.Contains(db)"
+                                       @onchange="e => ToggleDb(db, e.Value is true)" />
+                                @db
+                            </label>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        @if (_error is not null)
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        <div class="actions">
+            <button type="button" class="btn" @onclick="OnCancel">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync">下一步：预览确认</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly HashSet<string> _selectedDbs = new(StringComparer.Ordinal);
+    private string _username = string.Empty;
+    private string _host = "%";
+    private string _password = string.Empty;
+    private string _description = string.Empty;
+    private string? _error;
+
+    [Parameter, EditorRequired]
+    public DatabaseUserDialogMode Mode { get; set; }
+
+    [Parameter]
+    public DatabaseUserView? Existing { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<string> AvailableDbs { get; set; } = [];
+
+    [Parameter]
+    public EventCallback<DatabaseUserForm> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (Mode == DatabaseUserDialogMode.Password && Existing is not null)
+        {
+            _username = Existing.Username;
+            _host = Existing.Host;
+        }
+    }
+
+    private void ToggleDb(string db, bool selected)
+    {
+        if (selected)
+        {
+            _selectedDbs.Add(db);
+        }
+        else
+        {
+            _selectedDbs.Remove(db);
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_username))
+        {
+            _error = "请填写用户名。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_host))
+        {
+            _error = "请填写主机/访问范围（% 表示全部主机）。";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_password))
+        {
+            _error = "请填写密码。";
+            return;
+        }
+
+        if (_password.Length > 128)
+        {
+            _error = "密码长度不能超过 128 个字符。";
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(new DatabaseUserForm(
+            _username.Trim(),
+            _host.Trim(),
+            _password,
+            _description.Trim(),
+            _selectedDbs.ToArray()));
+    }
+}

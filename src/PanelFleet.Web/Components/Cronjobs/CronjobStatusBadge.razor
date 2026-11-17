@@ -1,0 +1,20 @@
+@using PanelFleet.Application.Cronjobs
+
+@if (string.IsNullOrWhiteSpace(Status))
+{
+    <span class="cronjob-status cronjob-status-unknown">未知</span>
+}
+else if (CronjobStatus.IsEnable(Status))
+{
+    <span class="cronjob-status cronjob-status-enable">启用</span>
+}
+else
+{
+    <span class="cronjob-status cronjob-status-disable">停用</span>
+}
+
+@code {
+    /// <summary>1Panel 状态：Enable / Disable。</summary>
+    [Parameter]
+    public string? Status { get; set; }
+}

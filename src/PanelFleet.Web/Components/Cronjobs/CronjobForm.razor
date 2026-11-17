@@ -1,0 +1,647 @@
+@using System.Text.Json.Nodes
+@using PanelFleet.Application.Cronjobs
+@using PanelFleet.Application.Models
+@inject ICronjobService CronjobService
+
+<div class="cronjob-form card">
+    <div class="cronjob-form-header">
+        <h2>@(IsEdit ? "编辑计划任务" : "新建计划任务")</h2>
+        <button type="button" class="btn" @onclick="CancelAsync" disabled="@Busy">关闭</button>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="alert alert-error">@_error</div>
+    }
+
+    <div class="cronjob-form-grid">
+        <label class="cronjob-field cronjob-field-wide">
+            <span class="cronjob-step-title">第 1 步 · 选择目标节点</span>
+            @if (IsEdit)
+            {
+                <input value="@(Editing?.NodeName ?? string.Empty)" readonly />
+                <small>任务已归属该节点；如需更换节点，请从目标节点上下文重新创建任务。</small>
+            }
+            else if (LockedNodeId is Guid)
+            {
+                <span class="cronjob-node-locked">
+                    <input value="@LockedNodeName" readonly />
+                    <span class="cronjob-node-locked-tag">已锁定</span>
+                </span>
+                <small>从节点上下文发起，目标节点已锁定。</small>
+            }
+            else
+            {
+                <select @bind="_nodeValue" disabled="@Busy" aria-label="选择目标节点">
+                    <option value="">请选择节点…</option>
+                    @foreach (var node in Nodes)
+                    {
+                        <option value="@node.Id.Value" disabled="@(!node.IsEnabled)">@node.Name@(node.IsEnabled ? string.Empty : "（已禁用）")</option>
+                    }
+                </select>
+                @if (Nodes.Count == 0)
+                {
+                    <small class="cronjob-field-error">暂无可用节点，请先到「节点管理」添加并启用节点。</small>
+                }
+                else if (!Guid.TryParse(_nodeValue, out _))
+                {
+                    <small>请先选择目标节点；未选择节点时不能提交。</small>
+                }
+            }
+        </label>
+
+        <label class="cronjob-field">
+            <span>任务名称</span>
+            <input @bind="_name" disabled="@Busy" placeholder="如 daily-backup" />
+            <small>只允许字母、数字、_ . -（1Panel 用它作为任务目录名）</small>
+        </label>
+
+        @if (!IsEdit)
+        {
+            <label class="cronjob-field">
+                <span>任务类型</span>
+                <select @bind="_type" disabled="@Busy">
+                    @foreach (var type in CronjobTypes.CreateSupported)
+                    {
+                        <option value="@type">@CronjobTypes.Label(type)</option>
+                    }
+                </select>
+            </label>
+        }
+        else
+        {
+            <label class="cronjob-field">
+                <span>任务类型</span>
+                <input value="@CronjobTypes.Label(_type)" readonly />
+            </label>
+        }
+
+        <label class="cronjob-field">
+            <span>分组</span>
+            <select @bind="_groupId" disabled="@Busy">
+                <option value="0">默认分组</option>
+                @foreach (var group in Groups)
+                {
+                    <option value="@group.Id">@group.Name</option>
+                }
+            </select>
+        </label>
+    </div>
+
+    <fieldset class="cronjob-fieldset" disabled="@Busy">
+        <legend>执行周期</legend>
+        <div class="cronjob-form-grid">
+            <label class="cronjob-field">
+                <span>周期方式</span>
+                <select @bind="_specCustomType" @bind:after="OnSpecChangedAsync">
+                    <option value="@(SpecMode.Structured)">结构化周期</option>
+                    <option value="@(SpecMode.Custom)">自定义 cron</option>
+                </select>
+            </label>
+
+            @if (_specCustomType == SpecMode.Custom)
+            {
+                <label class="cronjob-field cronjob-field-wide">
+                    <span>cron 表达式</span>
+                    <input @bind="_specCustomText" @bind:after="OnSpecChangedAsync" placeholder="如 30 1 * * 1 或 @@every 5m" />
+                    <small>支持 5 段 cron（分 时 日 月 周）或 @@every Nm / @@every Ns</small>
+                </label>
+            }
+            else
+            {
+                <label class="cronjob-field">
+                    <span>重复规则</span>
+                    <select @bind="_specType" @bind:after="OnSpecChangedAsync">
+                        <option value="@CronjobSpecType.PerMonth">每月</option>
+                        <option value="@CronjobSpecType.PerWeek">每周</option>
+                        <option value="@CronjobSpecType.PerDay">每天</option>
+                        <option value="@CronjobSpecType.PerHour">每小时</option>
+                        <option value="@CronjobSpecType.PerNDay">每 N 天</option>
+                        <option value="@CronjobSpecType.PerNHour">每 N 小时</option>
+                        <option value="@CronjobSpecType.PerNMinute">每 N 分钟</option>
+                        <option value="@CronjobSpecType.PerNSecond">每 N 秒</option>
+                    </select>
+                </label>
+
+                @if (_specType == CronjobSpecType.PerWeek)
+                {
+                    <label class="cronjob-field">
+                        <span>星期</span>
+                        <select @bind="_week" @bind:after="OnSpecChangedAsync">
+                            @for (var index = 0; index < 7; index++)
+                            {
+                                <option value="@index">@CronjobSpec.WeekdayName(index)</option>
+                            }
+                        </select>
+                    </label>
+                }
+
+                @if (_specType is CronjobSpecType.PerMonth or CronjobSpecType.PerNDay)
+                {
+                    <label class="cronjob-field">
+                        <span>@(_specType == CronjobSpecType.PerMonth ? "日期（1-31）" : "间隔天数（1-31）")</span>
+                        <input type="number" min="1" max="31" @bind="_day" @bind:after="OnSpecChangedAsync" />
+                    </label>
+                }
+
+                @if (_specType is CronjobSpecType.PerNHour)
+                {
+                    <label class="cronjob-field">
+                        <span>间隔小时（1-23）</span>
+                        <input type="number" min="1" max="23" @bind="_hourStep" @bind:after="OnSpecChangedAsync" />
+                    </label>
+                }
+                else if (_specType is not (CronjobSpecType.PerHour or CronjobSpecType.PerNMinute or CronjobSpecType.PerNSecond))
+                {
+                    <label class="cronjob-field">
+                        <span>小时（0-23）</span>
+                        <input type="number" min="0" max="23" @bind="_hour" @bind:after="OnSpecChangedAsync" />
+                    </label>
+                }
+
+                @if (_specType == CronjobSpecType.PerNMinute)
+                {
+                    <label class="cronjob-field">
+                        <span>间隔分钟（1-1440）</span>
+                        <input type="number" min="1" max="1440" @bind="_minute" @bind:after="OnSpecChangedAsync" />
+                    </label>
+                }
+                else if (_specType == CronjobSpecType.PerNSecond)
+                {
+                    <label class="cronjob-field">
+                        <span>间隔秒（1-86400）</span>
+                        <input type="number" min="1" max="86400" @bind="_second" @bind:after="OnSpecChangedAsync" />
+                    </label>
+                }
+                else
+                {
+                    <label class="cronjob-field">
+                        <span>分钟（0-59）</span>
+                        <input type="number" min="0" max="59" @bind="_minute" @bind:after="OnSpecChangedAsync" />
+                    </label>
+                }
+            }
+        </div>
+
+        <div class="cronjob-spec-preview">
+            <div>
+                <span class="muted small">当前周期：</span>
+                <code>@_specText</code>
+                <span class="muted small">@CronjobSpec.Describe(_specText)</span>
+            </div>
+            <div class="actions">
+                <button type="button" class="btn btn-xs" @onclick="PreviewSpecAsync" disabled="@Busy">预览下次执行时间</button>
+            </div>
+            @if (_specError is not null)
+            {
+                <div class="alert alert-warn">@_specError</div>
+            }
+            @if (_nextTimes.Count > 0)
+            {
+                <div class="cronjob-next">
+                    @foreach (var time in _nextTimes)
+                    {
+                        <span class="cronjob-next-item">@time</span>
+                    }
+                </div>
+            }
+        </div>
+    </fieldset>
+
+    @if (_type == CronjobTypes.Shell)
+    {
+        <fieldset class="cronjob-fieldset" disabled="@Busy">
+            <legend>Shell 脚本</legend>
+            <div class="cronjob-form-grid">
+                <label class="cronjob-field">
+                    <span>执行器</span>
+                    <select @bind="_executor">
+                        <option value="bash">bash</option>
+                        <option value="sh">sh</option>
+                        <option value="python">python</option>
+                        <option value="python3">python3</option>
+                    </select>
+                </label>
+            </div>
+            <label class="cronjob-field">
+                <span>脚本内容</span>
+                <textarea rows="8" @bind="_script" placeholder="#!/bin/bash&#10;echo hello"></textarea>
+            </label>
+        </fieldset>
+    }
+    else if (_type == CronjobTypes.Curl)
+    {
+        <fieldset class="cronjob-fieldset" disabled="@Busy">
+            <legend>URL 访问</legend>
+            <label class="cronjob-field">
+                <span>URL（多个用英文逗号分隔）</span>
+                <input @bind="_url" placeholder="https://example.com/health" />
+            </label>
+        </fieldset>
+    }
+    else if (_type == CronjobTypes.Directory)
+    {
+        <fieldset class="cronjob-fieldset" disabled="@Busy">
+            <legend>备份目录</legend>
+            <div class="cronjob-form-grid">
+                <label class="cronjob-field cronjob-field-wide">
+                    <span>源路径</span>
+                    <input @bind="_sourceDir" placeholder="/opt/data" />
+                </label>
+                <label class="cronjob-field">
+                    <span>类型</span>
+                    <select @bind="_isDir">
+                        <option value="true">目录</option>
+                        <option value="false">文件</option>
+                    </select>
+                </label>
+            </div>
+        </fieldset>
+    }
+    else if (_type == CronjobTypes.Website)
+    {
+        <fieldset class="cronjob-fieldset" disabled="@Busy">
+            <legend>备份网站</legend>
+            <label class="cronjob-field">
+                <span>网站域名（多个用英文逗号分隔）</span>
+                <input @bind="_website" placeholder="example.com" />
+            </label>
+        </fieldset>
+    }
+    else if (_type == CronjobTypes.App)
+    {
+        <fieldset class="cronjob-fieldset" disabled="@Busy">
+            <legend>备份应用</legend>
+            <label class="cronjob-field">
+                <span>应用 key（1Panel 已安装应用标识，如 jenkins）</span>
+                <input @bind="_appId" placeholder="jenkins" />
+            </label>
+        </fieldset>
+    }
+    else if (_type == CronjobTypes.Database)
+    {
+        <fieldset class="cronjob-fieldset" disabled="@Busy">
+            <legend>备份数据库</legend>
+            <div class="cronjob-form-grid">
+                <label class="cronjob-field">
+                    <span>数据库类型</span>
+                    <select @bind="_dbType">
+                        <option value="mysql">MySQL</option>
+                        <option value="mariadb">MariaDB</option>
+                        <option value="mysql-cluster">MySQL 集群</option>
+                        <option value="postgresql">PostgreSQL</option>
+                        <option value="postgresql-cluster">PostgreSQL 集群</option>
+                        <option value="mongodb">MongoDB</option>
+                    </select>
+                </label>
+                <label class="cronjob-field">
+                    <span>数据库记录 ID</span>
+                    <input @bind="_dbName" placeholder="1Panel 数据库列表中的数字 ID" />
+                </label>
+            </div>
+        </fieldset>
+    }
+
+    <fieldset class="cronjob-fieldset" disabled="@Busy">
+        <legend>执行选项</legend>
+        <div class="cronjob-form-grid">
+            <label class="cronjob-field">
+                <span>保留份数</span>
+                <input type="number" min="1" max="365" @bind="_retainCopies" />
+            </label>
+            <label class="cronjob-field">
+                <span>重试次数</span>
+                <input type="number" min="0" max="10" @bind="_retryTimes" />
+            </label>
+            <label class="cronjob-field">
+                <span>超时（秒）</span>
+                <input type="number" min="1" max="604800" @bind="_timeout" />
+            </label>
+            <label class="cronjob-field">
+                <span>忽略错误</span>
+                <select @bind="_ignoreErr">
+                    <option value="false">否（失败即标记失败）</option>
+                    <option value="true">是（忽略错误继续）</option>
+                </select>
+            </label>
+        </div>
+        @if (_type is CronjobTypes.Website or CronjobTypes.App or CronjobTypes.Database or CronjobTypes.Directory)
+        {
+            <label class="cronjob-field cronjob-field-wide">
+                <span>排除规则（可选，逗号分隔）</span>
+                <input @bind="_exclusionRules" placeholder="如 *.log,nohup.out" />
+            </label>
+        }
+    </fieldset>
+
+    @if (IsEdit && SecretSet)
+    {
+        <p class="muted small">该任务已设置备份压缩密码；本页不显示密码，保存时保留原密码。</p>
+    }
+
+    <div class="cronjob-form-footer">
+        <button type="button" class="btn" @onclick="CancelAsync" disabled="@Busy">取消</button>
+        <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@(Busy || !CanSubmit)">
+            @(Busy ? "提交中…" : (IsEdit ? "保存并预览确认" : "创建并预览确认"))
+        </button>
+    </div>
+</div>
+
+@code {
+    private enum SpecMode
+    {
+        Structured = 0,
+        Custom = 1
+    }
+
+    private string _name = string.Empty;
+    private string _nodeValue = string.Empty;
+    private string _type = CronjobTypes.Shell;
+    private long _groupId;
+    private long _editId;
+    private bool _edit;
+
+    private SpecMode _specCustomType = SpecMode.Structured;
+    private CronjobSpecType _specType = CronjobSpecType.PerWeek;
+    private int _week = 1;
+    private int _day = 1;
+    private int _hour = 1;
+    private int _hourStep = 2;
+    private int _minute = 30;
+    private int _second = 30;
+    private string _specCustomText = "30 1 * * 1";
+    private string _specText = string.Empty;
+    private string? _specError;
+    private IReadOnlyList<string> _nextTimes = [];
+
+    private string _executor = "bash";
+    private string _script = string.Empty;
+    private string _url = string.Empty;
+    private string _sourceDir = string.Empty;
+    private bool _isDir = true;
+    private string _website = string.Empty;
+    private string _appId = string.Empty;
+    private string _dbType = "mysql";
+    private string _dbName = string.Empty;
+    private string _exclusionRules = string.Empty;
+    private int _retainCopies = 7;
+    private int _retryTimes;
+    private int _timeout = 3600;
+    private bool _ignoreErr;
+    private string _args = string.Empty;
+
+    private string? _error;
+
+    /// <summary>可选节点（仅创建时用于选择目标节点）。</summary>
+    [Parameter]
+    public IReadOnlyList<NodeSummary> Nodes { get; set; } = [];
+
+    /// <summary>从节点上下文发起时锁定目标节点（创建模式）。</summary>
+    [Parameter]
+    public Guid? LockedNodeId { get; set; }
+
+    /// <summary>分组列表。</summary>
+    [Parameter]
+    public IReadOnlyList<CronjobGroupView> Groups { get; set; } = [];
+
+    /// <summary>编辑时传入的详情（null=新建）。</summary>
+    [Parameter]
+    public CronjobDetail? Editing { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<CronjobFormResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private bool IsEdit => _edit;
+
+    private bool SecretSet => Editing?.SecretSet == true;
+
+    private bool CanSubmit => IsEdit || Guid.TryParse(_nodeValue, out _);
+
+    private string LockedNodeName => LockedNodeId is Guid locked
+        ? Nodes.FirstOrDefault(node => node.Id.Value == locked)?.Name ?? locked.ToString()
+        : string.Empty;
+
+    private bool _initialized;
+    private CronjobDetail? _loadedEditing;
+
+    protected override void OnParametersSet()
+    {
+        // 父组件重渲染（如操作预览把 Busy 置 true）也会触发 OnParametersSet；
+        // 仅在编辑对象变化时重新载入，避免用户正在填写的表单被重置。
+        if (_initialized && ReferenceEquals(_loadedEditing, Editing))
+        {
+            return;
+        }
+
+        _initialized = true;
+        _loadedEditing = Editing;
+
+        if (Editing is null)
+        {
+            _edit = false;
+            _editId = 0;
+            _nodeValue = LockedNodeId is Guid locked
+                && Nodes.Any(node => node.Id.Value == locked && node.IsEnabled)
+                ? locked.ToString("D")
+                : string.Empty;
+
+            SyncSpecPreview();
+            return;
+        }
+
+        _edit = true;
+        _editId = Editing.Id;
+        _nodeValue = Editing.NodeId.ToString("D");
+        _type = Editing.Editable?.Type ?? Editing.Type;
+        var model = Editing.Editable;
+        if (model is null)
+        {
+            return;
+        }
+
+        _name = model.Name;
+        _groupId = model.GroupID;
+        if (model.SpecCustom || !CronjobSpec.TryParse(model.Spec, out var parts))
+        {
+            _specCustomType = SpecMode.Custom;
+            _specCustomText = model.Spec;
+        }
+        else
+        {
+            _specCustomType = SpecMode.Structured;
+            _specType = parts.Type;
+            _week = parts.Week;
+            _day = parts.Day == 0 ? 1 : parts.Day;
+            _hour = parts.Hour;
+            _hourStep = parts.Hour == 0 ? 2 : parts.Hour;
+            _minute = parts.Minute;
+            _second = parts.Second == 0 ? 30 : parts.Second;
+        }
+
+        _executor = model.Executor ?? "bash";
+        _script = model.Script ?? string.Empty;
+        _url = model.URL ?? string.Empty;
+        _sourceDir = model.SourceDir ?? string.Empty;
+        _isDir = model.IsDir;
+        _website = model.Website ?? string.Empty;
+        _appId = model.AppID ?? string.Empty;
+        _dbType = string.IsNullOrWhiteSpace(model.DBType) ? "mysql" : model.DBType;
+        _dbName = model.DBName ?? string.Empty;
+        _exclusionRules = model.ExclusionRules ?? string.Empty;
+        _retainCopies = model.RetainCopies <= 0 ? 7 : model.RetainCopies;
+        _retryTimes = model.RetryTimes;
+        _timeout = model.Timeout <= 0 ? 3600 : (int)Math.Min(model.Timeout, 604800);
+        _ignoreErr = model.IgnoreErr;
+        _args = model.Args ?? string.Empty;
+
+        SyncSpecPreview();
+    }
+
+    private void SyncSpecPreview()
+    {
+        try
+        {
+            _specText = BuildSpec();
+            _specError = null;
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            _specError = exception.Message;
+        }
+    }
+
+    private string BuildSpec() => _specCustomType == SpecMode.Custom
+        ? _specCustomText.Trim()
+        : CronjobSpec.Build(new CronjobSpecParts(_specType, _week, _day, _hour, _minute, _second));
+
+    private Task OnSpecChangedAsync()
+    {
+        _nextTimes = [];
+        SyncSpecPreview();
+        return Task.CompletedTask;
+    }
+
+    private async Task PreviewSpecAsync()
+    {
+        _specError = null;
+        _nextTimes = [];
+        var spec = BuildSpec();
+        if (string.IsNullOrWhiteSpace(spec))
+        {
+            _specError = "周期表达式不能为空。";
+            return;
+        }
+
+        try
+        {
+            var nodeId = Guid.TryParse(_nodeValue, out var id) ? id : (Guid?)null;
+            var preview = await CronjobService.PreviewSpecAsync(nodeId, spec, CancellationToken.None);
+            if (preview.Error is not null)
+            {
+                _specError = "预览失败：" + preview.Error.Message;
+                return;
+            }
+
+            _nextTimes = preview.NextTimes;
+            if (_nextTimes.Count == 0)
+            {
+                _specError = "1Panel 未返回下次执行时间，请检查周期表达式。";
+            }
+        }
+        catch (Exception exception)
+        {
+            _specError = "预览失败：" + exception.Message;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        SyncSpecPreview();
+        if (_specError is not null)
+        {
+            _error = _specError;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            _error = "请填写任务名称。";
+            return;
+        }
+
+        if (!IsEdit && !Guid.TryParse(_nodeValue, out _))
+        {
+            _error = "请选择目标节点。";
+            return;
+        }
+
+        var spec = BuildSpec();
+        if (!CronjobSpec.IsValid(spec))
+        {
+            _error = "周期表达式不合法，请检查周期设置。";
+            return;
+        }
+
+        var type = _type;
+        var payload = new JsonObject
+        {
+            ["name"] = _name.Trim(),
+            ["type"] = type,
+            ["groupID"] = _groupId,
+            ["specCustom"] = _specCustomType == SpecMode.Custom,
+            ["spec"] = spec,
+            ["retainCopies"] = _retainCopies,
+            ["retryTimes"] = _retryTimes,
+            ["timeout"] = _timeout,
+            ["ignoreErr"] = _ignoreErr,
+            ["args"] = _args
+        };
+
+        switch (type)
+        {
+            case CronjobTypes.Shell:
+                payload["executor"] = _executor;
+                payload["scriptMode"] = "input";
+                payload["script"] = _script;
+                payload["command"] = string.Empty;
+                payload["containerName"] = string.Empty;
+                payload["user"] = string.Empty;
+                break;
+            case CronjobTypes.Curl:
+                payload["url"] = _url.Trim();
+                break;
+            case CronjobTypes.Directory:
+                payload["sourceDir"] = _sourceDir.Trim();
+                payload["isDir"] = _isDir;
+                payload["exclusionRules"] = _exclusionRules.Trim();
+                break;
+            case CronjobTypes.Website:
+                payload["website"] = _website.Trim();
+                break;
+            case CronjobTypes.App:
+                payload["appID"] = _appId.Trim();
+                break;
+            case CronjobTypes.Database:
+                payload["dbType"] = _dbType;
+                payload["dbName"] = _dbName.Trim();
+                break;
+        }
+
+        if (IsEdit)
+        {
+            payload["id"] = _editId;
+        }
+
+        var nodeId = Guid.TryParse(_nodeValue, out var parsed) ? parsed : Guid.Empty;
+        await OnSubmit.InvokeAsync(new CronjobFormResult(payload, _editId, nodeId, _name.Trim(), type));
+    }
+
+    private Task CancelAsync() => OnCancel.InvokeAsync();
+}

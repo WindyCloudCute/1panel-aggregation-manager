@@ -1,0 +1,12 @@
+.compose-delete-modal {
+    width: min(520px, 94vw);
+    border-radius: var(--radius-xl, 22px);
+}
+.compose-delete-modal h2 { margin: 0 0 2px; }
+.compose-delete-option { margin: 8px 0; }
+.compose-delete-option .checkbox-inline { align-items: flex-start; line-height: 1.5; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-actions .btn:active { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) {
+    .modal-actions .btn:active { transform: none; }
+}

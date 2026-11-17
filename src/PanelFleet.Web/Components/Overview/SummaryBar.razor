@@ -1,0 +1,87 @@
+@using PanelFleet.Application.Models
+
+<div class="summary-grid">
+    <div class="summary-card">
+        <div class="summary-value">@Overview.Totals.EnabledCount</div>
+        <div class="summary-label">启用节点</div>
+        <div class="summary-sub">共 @Overview.Totals.NodeCount 台，禁用 @Overview.Totals.DisabledCount</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-value summary-ok">@Overview.Totals.OnlineCount</div>
+        <div class="summary-label">在线</div>
+        <div class="summary-sub">数据覆盖 @Overview.Totals.NodesWithData/@Overview.Totals.EnabledCount</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-value summary-warn">@Overview.Totals.DegradedCount</div>
+        <div class="summary-label">降级</div>
+        <div class="summary-sub">异常 @Overview.Totals.ErrorCount · 熔断 @Overview.Totals.CircuitOpenCount</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-value summary-error">@Overview.Totals.OfflineCount</div>
+        <div class="summary-label">离线</div>
+        <div class="summary-sub">缓存数据 @Overview.Totals.StaleCount</div>
+    </div>
+</div>
+
+<div class="card summary-details">
+    <div class="summary-row">
+        <span>网站 <strong>@Overview.Totals.WebsiteCount</strong></span>
+        <span>应用 <strong>@Overview.Totals.AppCount</strong></span>
+        <span>数据库 <strong>@Overview.Totals.DatabaseCount</strong></span>
+        <span>计划任务 <strong>@Overview.Totals.CronjobCount</strong></span>
+    </div>
+    <div class="summary-row">
+        <span>内存 <strong>@FormatBytes(Overview.Totals.MemoryUsedBytes)/@FormatBytes(Overview.Totals.MemoryTotalBytes)</strong></span>
+        <span>磁盘 <strong>@FormatPercent(Overview.Totals.DiskUsedPercent)</strong>（最高 @FormatPercent(MaxDiskPercent)@MaxDiskLabel）</span>
+        <span>平均 CPU <strong>@FormatPercent(Overview.Totals.CpuUsedPercentAvg)</strong></span>
+        <span class="muted small">合计仅覆盖有数据节点</span>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public FleetOverview Overview { get; set; } = null!;
+
+    private double? MaxDiskPercent => Overview.Nodes
+        .Where(node => node.Metrics?.MaxDiskUsedPercent is not null)
+        .Select(node => node.Metrics!.MaxDiskUsedPercent)
+        .DefaultIfEmpty(null)
+        .Max();
+
+    private string MaxDiskLabel
+    {
+        get
+        {
+            var node = Overview.Nodes
+                .Where(item => item.Metrics?.MaxDiskUsedPercent is not null)
+                .OrderByDescending(item => item.Metrics!.MaxDiskUsedPercent)
+                .FirstOrDefault();
+
+            if (node?.Metrics is not { } metrics)
+            {
+                return string.Empty;
+            }
+
+            return $"（{metrics.MaxDiskPath ?? "?"} @ {node.Name}）";
+        }
+    }
+
+    private static string FormatBytes(long? bytes)
+    {
+        if (bytes is not > 0)
+        {
+            return "—";
+        }
+
+        const double tb = 1024d * 1024d * 1024d * 1024d;
+        const double gb = 1024d * 1024d * 1024d;
+        const double mb = 1024d * 1024d;
+        return bytes.Value >= tb
+            ? $"{bytes.Value / tb:0.00} TB"
+            : bytes.Value >= gb
+                ? $"{bytes.Value / gb:0.0} GB"
+                : $"{bytes.Value / mb:0.0} MB";
+    }
+
+    private static string FormatPercent(double? value) => value is null ? "—" : $"{value.Value:0.0}%";
+}

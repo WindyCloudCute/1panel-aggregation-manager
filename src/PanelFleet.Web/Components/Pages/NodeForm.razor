@@ -1,0 +1,278 @@
+@page "/nodes/new"
+@page "/nodes/{Id:guid}/edit"
+@attribute [Authorize]
+@inject INodeService NodeService
+@inject IActorProvider Actors
+@inject NavigationManager Navigation
+
+<PageTitle>@(_isEdit ? "编辑节点" : "添加节点")</PageTitle>
+
+<PageShell>
+<div class="page-header">
+    <h1>@(_isEdit ? "编辑节点" : "添加节点")</h1>
+    <a class="btn" href="/nodes">返回列表</a>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-error">@_error</div>
+}
+
+@if (_errors is { Count: > 0 })
+{
+    <div class="alert alert-error">
+        <ul>
+            @foreach (var pair in _errors)
+            {
+                <li><strong>@pair.Key</strong>：@string.Join("；", pair.Value)</li>
+            }
+        </ul>
+    </div>
+}
+
+<div class="card form-card">
+    <div class="form-row">
+        <label>名称</label>
+        <input @bind="_name" placeholder="例如：生产-香港-01" />
+    </div>
+
+    <div class="form-row">
+        <label>地址</label>
+        <input @bind="_baseUrl" placeholder="https://panel.example.com" />
+        <span class="muted small">只填 API 根地址：http://host:port 或反向代理子路径；不要包含 1Panel 安全入口（如 /myentrance），API 固定为 /api/v2。</span>
+    </div>
+
+    <div class="form-row">
+        <label>安全入口（可选）</label>
+        <input @bind="_securityEntrance" placeholder="例如 myentrance" />
+        <span class="muted small">仅保存备用（以后用于跳转面板 UI）；API 不使用，带 / 会自动去掉。</span>
+    </div>
+
+    <div class="form-row">
+        <label>API Key</label>
+        <input type="password" autocomplete="off" @bind="_apiKey" placeholder="@(_isEdit ? "已保存，留空表示不修改" : "请输入 1Panel API Key")" />
+        <span class="muted small">只写不读；保存后仅显示末 4 位。</span>
+    </div>
+
+    <div class="form-row">
+        <label>鉴权方式</label>
+        <select @bind="_authMode">
+            <option value="Auto">自动（HMAC 优先，失败回退 MD5）</option>
+            <option value="HmacSha256">HMAC-SHA256</option>
+            <option value="Md5">MD5</option>
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label>TLS 策略</label>
+        <select @bind="_tlsPolicy">
+            <option value="Strict">严格校验证书（推荐）</option>
+            <option value="AllowSelfSigned">接受自签证书（有风险）</option>
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label>分组</label>
+        <select @bind="_groupId">
+            <option value="">（不分组）</option>
+            @foreach (var group in _groups)
+            {
+                <option value="@group.Id.ToString("D")">@group.Name</option>
+            }
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label>标签</label>
+        <input @bind="_tags" placeholder="逗号分隔，例如：生产, 香港" />
+    </div>
+
+    <div class="form-row">
+        <label>备注</label>
+        <textarea @bind="_remark" rows="3" placeholder="可选"></textarea>
+    </div>
+
+    <div class="form-row checkbox-row">
+        <label>
+            <input type="checkbox" @bind="_isEnabled" />
+            启用健康巡检
+        </label>
+    </div>
+
+    <div class="actions">
+        <button type="button" class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">保存</button>
+        <button type="button" class="btn" @onclick="TestAsync" disabled="@_busy">测试连接</button>
+        <a class="btn" href="/nodes">取消</a>
+    </div>
+
+    @if (_testResult is not null)
+    {
+        <NodeTestResultView Result="_testResult" />
+    }
+</div>
+</PageShell>
+
+@code {
+    [Parameter]
+    public Guid? Id { get; set; }
+
+    private bool _isEdit => Id is not null;
+
+    private string _name = string.Empty;
+    private string _baseUrl = string.Empty;
+    private string _apiKey = string.Empty;
+    private string _securityEntrance = string.Empty;
+    private AuthMode _authMode = AuthMode.Auto;
+    private TlsPolicy _tlsPolicy = TlsPolicy.Strict;
+    private string _groupId = string.Empty;
+    private string _tags = string.Empty;
+    private string? _remark;
+    private bool _isEnabled = true;
+    private bool _busy;
+    private string? _error;
+    private IReadOnlyDictionary<string, string[]>? _errors;
+    private NodeTestResult? _testResult;
+    private IReadOnlyList<NodeGroupSummary> _groups = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _groups = await NodeService.ListGroupsAsync(default);
+
+            if (Id is not { } id)
+            {
+                return;
+            }
+
+            var nodes = await NodeService.ListAsync(default);
+            var node = nodes.FirstOrDefault(item => item.Id.Value == id);
+            if (node is null)
+            {
+                Navigation.NavigateTo("/nodes");
+                return;
+            }
+
+            _name = node.Name;
+            _baseUrl = node.BaseUrl.ToString();
+            _authMode = node.AuthMode;
+            _tlsPolicy = node.TlsPolicy;
+            _groupId = node.GroupId?.ToString("D") ?? string.Empty;
+            _tags = string.Join(", ", node.Tags);
+            _remark = node.Remark;
+            _securityEntrance = node.SecurityEntrance ?? string.Empty;
+            _isEnabled = node.IsEnabled;
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _error = null;
+        _errors = null;
+
+        try
+        {
+            var actor = await Actors.GetAsync();
+            var tags = ParseTags(_tags);
+            var groupId = ParseGroupId(_groupId);
+
+            if (Id is { } id)
+            {
+                var update = new UpdateNodeRequest(
+                    _name,
+                    _baseUrl,
+                    string.IsNullOrWhiteSpace(_apiKey) ? null : _apiKey,
+                    _authMode,
+                    _tlsPolicy,
+                    groupId,
+                    tags,
+                    _remark,
+                    _isEnabled,
+                    _securityEntrance);
+
+                await NodeService.UpdateAsync(new NodeId(id), update, actor, default);
+            }
+            else
+            {
+                var create = new CreateNodeRequest(
+                    _name,
+                    _baseUrl,
+                    _apiKey,
+                    _authMode,
+                    _tlsPolicy,
+                    groupId,
+                    tags,
+                    _remark,
+                    _isEnabled,
+                    _securityEntrance);
+
+                await NodeService.CreateAsync(create, actor, default);
+            }
+
+            Navigation.NavigateTo("/nodes");
+        }
+        catch (NodeValidationException exception)
+        {
+            _errors = exception.Errors;
+        }
+        catch (NodeConflictException exception)
+        {
+            _error = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task TestAsync()
+    {
+        _busy = true;
+        _error = null;
+        _errors = null;
+
+        try
+        {
+            if (Id is { } id && string.IsNullOrWhiteSpace(_apiKey))
+            {
+                var actor = await Actors.GetAsync();
+                _testResult = await NodeService.TestSavedAsync(new NodeId(id), actor, default);
+            }
+            else
+            {
+                _testResult = await NodeService.TestDraftAsync(
+                    new TestDraftRequest(_baseUrl, _apiKey, _authMode, _tlsPolicy),
+                    default);
+            }
+        }
+        catch (NodeValidationException exception)
+        {
+            _errors = exception.Errors;
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static IReadOnlyList<string> ParseTags(string value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static Guid? ParseGroupId(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : Guid.Parse(value);
+}

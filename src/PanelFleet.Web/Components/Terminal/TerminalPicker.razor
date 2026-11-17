@@ -1,0 +1,276 @@
+@using PanelFleet.Application.Containers
+@using PanelFleet.Application.Models
+@using PanelFleet.Domain.Model
+@inject INodeService NodeService
+@inject IContainerService ContainerService
+@inject NavigationManager Navigation
+
+@* 终端入口选择：先选节点，再进入主机终端或某个容器的 exec。 *@
+@if (!Enabled)
+{
+    <div class="alert alert-warn terminal-picker-disabled">
+        终端功能已被管理员停用（配置项 <code>Terminal:Enabled=false</code>）；启用后可在此选择节点与容器。
+    </div>
+}
+else if (_loading && !_nodesLoaded)
+{
+    <div class="terminal-skeleton" aria-busy="true" aria-label="正在加载节点">
+        <div class="terminal-skeleton-line terminal-skeleton-lg"></div>
+        <div class="terminal-skeleton-card"></div>
+        <div class="terminal-skeleton-card"></div>
+    </div>
+}
+else if (_nodesError is not null)
+{
+    <div class="alert alert-error">
+        节点列表加载失败：@_nodesError
+        <button type="button" class="btn" @onclick="LoadNodesAsync">重试</button>
+    </div>
+}
+else if (_nodes.Count == 0)
+{
+    <div class="card terminal-picker-empty">
+        <p class="muted">还没有已启用的节点。先到 <a href="/nodes/new">添加节点</a> 接入 1Panel，再使用终端。</p>
+        <p class="muted small">主机终端依赖节点的 SSH 连接配置；容器 exec 依赖 Docker 正在运行。</p>
+    </div>
+}
+else
+{
+    <div class="terminal-picker">
+        <div class="terminal-picker-toolbar">
+            <label class="terminal-picker-search">
+                <span class="muted small">筛选节点</span>
+                <input class="search-input" placeholder="节点名称 / 地址…" @bind="_filter" @bind:event="oninput" />
+            </label>
+            <span class="muted small">
+                共 @_nodes.Count 个已启用节点；选择「主机终端」直接进入 shell，或展开「容器 exec」选择运行中的容器。
+            </span>
+        </div>
+
+        @if (FilteredNodes.Count == 0)
+        {
+            <div class="card resource-empty">
+                <p>没有匹配的节点。</p>
+            </div>
+        }
+        else
+        {
+            @foreach (var node in FilteredNodes)
+            {
+                var nodeId = node.Id.Value;
+                <section class="card terminal-node @(_highlightedNodeId == nodeId ? "is-highlighted" : null)">
+                    <div class="terminal-node-head">
+                        <span class="picker-health-dot @HealthDotClass(node)"></span>
+                        <div class="terminal-node-title">
+                            <strong>@node.Name</strong>
+                            <span class="muted small">@node.BaseUrl</span>
+                        </div>
+                        <span class="badge @HealthBadgeClass(node)">@HealthText(node)</span>
+                        @if (!string.IsNullOrWhiteSpace(node.PanelVersion))
+                        {
+                            <span class="badge badge-unknown">@node.PanelVersion</span>
+                        }
+                        <div class="terminal-node-actions">
+                            <button type="button" class="btn btn-primary"
+                                    disabled="@_opening"
+                                    @onclick="() => OpenHostAsync(node)">
+                                主机终端
+                            </button>
+                            <button type="button" class="btn"
+                                    @onclick="() => ToggleContainersAsync(node)">
+                                @(_expandedNodeId == nodeId ? "收起容器" : "容器 exec")
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (_expandedNodeId == nodeId)
+                    {
+                        @if (_containerLoading)
+                        {
+                            <div class="terminal-container-state muted small">正在读取运行中的容器…</div>
+                        }
+                        else if (_containerError is not null)
+                        {
+                            <div class="alert alert-warn terminal-container-state">
+                                @_containerError
+                                <button type="button" class="btn btn-xs" @onclick="() => LoadContainersAsync(node)">重试</button>
+                            </div>
+                        }
+                        else if (_containers.Count == 0)
+                        {
+                            <div class="terminal-container-state muted small">该节点没有运行中的容器；可先到容器管理启动容器。</div>
+                        }
+                        else
+                        {
+                            <div class="terminal-container-list">
+                                @foreach (var container in _containers)
+                                {
+                                    <button type="button" class="terminal-container-item"
+                                            title="以默认 shell 进入容器 @container.Name"
+                                            @onclick="() => OpenContainerAsync(node, container)">
+                                        <span class="terminal-container-name">@container.Name</span>
+                                        @if (!string.IsNullOrWhiteSpace(container.Image))
+                                        {
+                                            <span class="muted small terminal-container-image">@container.Image</span>
+                                        }
+                                        <span class="badge badge-ok">@(container.State ?? "running")</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    }
+                </section>
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public bool Enabled { get; set; } = true;
+
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private bool _nodesLoaded;
+    private bool _loading;
+    private string? _nodesError;
+    private string? _filter;
+
+    private Guid? _expandedNodeId;
+    private IReadOnlyList<ContainerRow> _containers = [];
+    private bool _containerLoading;
+    private string? _containerError;
+
+    private Guid? _highlightedNodeId;
+    private bool _opening;
+
+    private IReadOnlyList<NodeSummary> FilteredNodes =>
+        string.IsNullOrWhiteSpace(_filter)
+            ? _nodes
+            : _nodes.Where(node =>
+                node.Name.Contains(_filter.Trim(), StringComparison.OrdinalIgnoreCase)
+                || node.BaseUrl.AbsoluteUri.Contains(_filter.Trim(), StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Enabled)
+        {
+            return;
+        }
+
+        await LoadNodesAsync();
+    }
+
+    private async Task LoadNodesAsync()
+    {
+        _loading = true;
+        _nodesError = null;
+        try
+        {
+            var nodes = await NodeService.ListAsync(CancellationToken.None);
+            _nodes = nodes.Where(node => node.IsEnabled).ToArray();
+            _nodesLoaded = true;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _nodesError = exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ToggleContainersAsync(NodeSummary node)
+    {
+        var nodeId = node.Id.Value;
+        if (_expandedNodeId == nodeId)
+        {
+            _expandedNodeId = null;
+            _containers = [];
+            _containerError = null;
+            return;
+        }
+
+        _expandedNodeId = nodeId;
+        _highlightedNodeId = nodeId;
+        await LoadContainersAsync(node);
+    }
+
+    private async Task LoadContainersAsync(NodeSummary node)
+    {
+        _containerLoading = true;
+        _containerError = null;
+        _containers = [];
+        try
+        {
+            var result = await ContainerService.ListAsync(
+                new ContainerQuery(node.Id.Value, null, "running", "name", "ascending", 1, 100),
+                CancellationToken.None);
+
+            _containers = result.Rows;
+            if (result.NodesFailed > 0 && result.Rows.Count == 0)
+            {
+                _containerError = "容器列表读取失败，请检查节点连接后重试。";
+            }
+        }
+        catch (Exception exception)
+        {
+            _containerError = "读取容器列表失败：" + exception.Message;
+        }
+        finally
+        {
+            _containerLoading = false;
+        }
+    }
+
+    private void OpenHostAsync(NodeSummary node)
+    {
+        if (_opening)
+        {
+            return;
+        }
+
+        _opening = true;
+        Navigation.NavigateTo($"/terminal?nodeId={node.Id.Value}");
+    }
+
+    private void OpenContainerAsync(NodeSummary node, ContainerRow container)
+    {
+        if (_opening)
+        {
+            return;
+        }
+
+        _opening = true;
+        Navigation.NavigateTo(
+            $"/terminal?nodeId={node.Id.Value}&container={Uri.EscapeDataString(container.Name)}");
+    }
+
+    private static string HealthText(NodeSummary node) => node.Health switch
+    {
+        NodeHealth.Online => "在线",
+        NodeHealth.Degraded => "降级",
+        NodeHealth.Offline => "离线",
+        _ => "未知"
+    };
+
+    private static string HealthBadgeClass(NodeSummary node) => node.Health switch
+    {
+        NodeHealth.Online => "badge-ok",
+        NodeHealth.Degraded => "badge-warn",
+        NodeHealth.Offline => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private static string HealthDotClass(NodeSummary node) => node.Health switch
+    {
+        NodeHealth.Online => "picker-dot-ok",
+        NodeHealth.Degraded => "picker-dot-busy",
+        NodeHealth.Offline => "picker-dot-error",
+        _ => "picker-dot-idle"
+    };
+}

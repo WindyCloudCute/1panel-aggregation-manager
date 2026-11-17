@@ -1,0 +1,25 @@
+@* 首页总览骨架屏：保持与 SummaryBar + 节点卡网格一致的占位形状，避免加载时布局跳动。 *@
+<div class="overview-skeleton" aria-busy="true" aria-label="正在加载总览">
+    <div class="overview-skeleton-grid">
+        @for (var index = 0; index < 4; index++)
+        {
+            <div class="skeleton-card">
+                <span class="skeleton skeleton-value"></span>
+                <span class="skeleton skeleton-label"></span>
+                <span class="skeleton skeleton-sub"></span>
+            </div>
+        }
+    </div>
+
+    <div class="overview-skeleton-nodes">
+        @for (var index = 0; index < 2; index++)
+        {
+            <div class="skeleton-node">
+                <span class="skeleton skeleton-node-title"></span>
+                <span class="skeleton skeleton-line"></span>
+                <span class="skeleton skeleton-line"></span>
+                <span class="skeleton skeleton-line skeleton-line-short"></span>
+            </div>
+        }
+    </div>
+</div>

@@ -1,0 +1,215 @@
+@using System.Globalization
+@using PanelFleet.Application.Containers
+
+@if (Rows.Count == 0)
+{
+    <div class="resource-empty">
+        <p>暂无容器。</p>
+        <p class="muted small">可清空搜索条件、切换状态/节点筛选，或点击「刷新」重新采集。</p>
+    </div>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="table container-table">
+            <thead>
+                <tr>
+                    <th class="col-select">
+                        <input type="checkbox"
+                               checked="@AllSelected"
+                               disabled="@(Rows.Count == 0)"
+                               title="全选当前页"
+                               @onchange="e => OnSelectAll.InvokeAsync(e.Value is true)" />
+                    </th>
+                    <th>名称</th>
+                    <th>状态</th>
+                    <th>镜像</th>
+                    <th>端口</th>
+                    <th>资源</th>
+                    <th>来源 / 关联</th>
+                    <th>节点</th>
+                    <th class="col-actions">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Rows)
+                {
+                    var selected = SelectedKeys.Contains(Key(row));
+                    var active = IsActive(row);
+                    <tr class="@RowClass(selected, active)" @onclick="() => OnDetail.InvokeAsync(row)" title="点击查看详情">
+                        <td class="col-select">
+                            <input type="checkbox"
+                                   checked="@selected"
+                                   aria-label="选择该容器"
+                                   @onclick:stopPropagation="true"
+                                   @onchange="e => OnSelect.InvokeAsync((row, e.Value is true))" />
+                        </td>
+                        <td class="cell-name">
+                            <span class="container-name">@row.Name</span>
+                            @if (row.IsPinned)
+                            {
+                                <span class="badge badge-warn pinned-badge" title="1Panel 中已固定">已固定</span>
+                            }
+                            <div class="muted small mono">@ShortId(row.ContainerId)</div>
+                        </td>
+                        <td>
+                            <ContainerStatusBadge State="@row.State" />
+                            <div class="muted small">@row.RunTime</div>
+                        </td>
+                        <td class="cell-ellipsis mono" title="@row.Image">@row.Image</td>
+                        <td>
+                            @if (row.Ports.Count == 0)
+                            {
+                                <span class="muted">—</span>
+                            }
+                            else
+                            {
+                                @foreach (var port in row.Ports.Take(2))
+                                {
+                                    <div class="mono small">@port</div>
+                                }
+                                @if (row.Ports.Count > 2)
+                                {
+                                    <div class="muted small">+@(row.Ports.Count - 2) 个端口</div>
+                                }
+                            }
+                        </td>
+                        <td class="stats-cell">
+                            @if (row.Stats is { } stats)
+                            {
+                                <div class="stat-line">
+                                    <span class="muted small">CPU</span>
+                                    <span class="mono">@stats.CpuPercent.ToString("0.00", CultureInfo.InvariantCulture)%</span>
+                                </div>
+                                <div class="stat-line">
+                                    <span class="muted small">内存</span>
+                                    <span class="mono">@stats.MemoryPercent.ToString("0.0", CultureInfo.InvariantCulture)%</span>
+                                </div>
+                            }
+                            else
+                            {
+                                <span class="muted">—</span>
+                            }
+                        </td>
+                        <td>
+                            <span class="badge badge-unknown">@row.Source</span>
+                            @if (!string.IsNullOrWhiteSpace(row.AppName))
+                            {
+                                <div class="muted small">@row.AppName</div>
+                            }
+                            @if (row.Websites.Count > 0)
+                            {
+                                <div class="muted small" title="@string.Join("、", row.Websites)">网站：@string.Join("、", row.Websites.Take(2))</div>
+                            }
+                        </td>
+                        <td class="muted">@row.NodeName</td>
+                        <td class="col-actions" @onclick:stopPropagation="true">
+                            <div class="row-actions">
+                                @if (CanStart(row))
+                                {
+                                    <button type="button" class="btn btn-xs" @onclick="() => StartAsync(row)">启动</button>
+                                }
+                                @if (CanStop(row))
+                                {
+                                    <button type="button" class="btn btn-xs" @onclick="() => StopAsync(row)">停止</button>
+                                }
+                                @if (CanRestart(row))
+                                {
+                                    <button type="button" class="btn btn-xs" @onclick="() => RestartAsync(row)">重启</button>
+                                }
+                                @if (CanPause(row))
+                                {
+                                    <button type="button" class="btn btn-xs" @onclick="() => PauseAsync(row)">暂停</button>
+                                }
+                                @if (CanUnpause(row))
+                                {
+                                    <button type="button" class="btn btn-xs" @onclick="() => UnpauseAsync(row)">恢复</button>
+                                }
+                                <button type="button" class="btn btn-xs" @onclick="() => LogsAsync(row)">日志</button>
+                                @if (CanTerminal(row))
+                                {
+                                    <button type="button" class="btn btn-xs" title="在抽屉中打开容器终端" @onclick="() => TerminalAsync(row)">终端</button>
+                                }
+                                <button type="button" class="btn btn-xs btn-danger" @onclick="() => DeleteAsync(row)">删除</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ContainerRow> Rows { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlySet<string> SelectedKeys { get; set; } = new HashSet<string>();
+
+    [Parameter]
+    public EventCallback<(ContainerRow Row, bool Selected)> OnSelect { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> OnSelectAll { get; set; }
+
+    [Parameter]
+    public EventCallback<ContainerRow> OnDetail { get; set; }
+
+    [Parameter]
+    public EventCallback<ContainerRow> OnLogs { get; set; }
+
+    [Parameter]
+    public EventCallback<(ContainerRow Row, string Kind)> OnOperate { get; set; }
+
+    /// <summary>点击「终端」时由父组件打开终端抽屉。</summary>
+    [Parameter]
+    public EventCallback<ContainerRow> OnTerminal { get; set; }
+
+    /// <summary>当前从左侧树定位到的容器键（nodeId/name），用于行高亮。</summary>
+    [Parameter]
+    public string? ActiveKey { get; set; }
+
+    private bool AllSelected => Rows.Count > 0 && Rows.All(row => SelectedKeys.Contains(Key(row)));
+
+    private bool IsActive(ContainerRow row) =>
+        !string.IsNullOrEmpty(ActiveKey) && string.Equals(ActiveKey, Key(row), StringComparison.Ordinal);
+
+    private static string RowClass(bool selected, bool active) =>
+        "container-row" + (selected ? " is-selected" : string.Empty) + (active ? " is-active" : string.Empty);
+
+    private Task StartAsync(ContainerRow row) => OnOperate.InvokeAsync((row, "container.start"));
+
+    private Task StopAsync(ContainerRow row) => OnOperate.InvokeAsync((row, "container.stop"));
+
+    private Task RestartAsync(ContainerRow row) => OnOperate.InvokeAsync((row, "container.restart"));
+
+    private Task PauseAsync(ContainerRow row) => OnOperate.InvokeAsync((row, "container.pause"));
+
+    private Task UnpauseAsync(ContainerRow row) => OnOperate.InvokeAsync((row, "container.unpause"));
+
+    private Task DeleteAsync(ContainerRow row) => OnOperate.InvokeAsync((row, "container.delete"));
+
+    private Task LogsAsync(ContainerRow row) => OnLogs.InvokeAsync(row);
+
+    private Task TerminalAsync(ContainerRow row) => OnTerminal.InvokeAsync(row);
+
+    /// <summary>节点 + 名称 唯一键（容器名在单节点内唯一）。</summary>
+    public static string Key(ContainerRow row) => row.NodeId.ToString("N") + "/" + row.Name;
+
+    private static bool CanStart(ContainerRow row) => ContainerStates.IsStopped(row.State);
+
+    private static bool CanStop(ContainerRow row) => ContainerStates.IsRunning(row.State);
+
+    private static bool CanRestart(ContainerRow row) =>
+        ContainerStates.IsRunning(row.State) || ContainerStates.IsStopped(row.State) || ContainerStates.IsPaused(row.State);
+
+    private static bool CanPause(ContainerRow row) => ContainerStates.IsRunning(row.State);
+
+    private static bool CanUnpause(ContainerRow row) => ContainerStates.IsPaused(row.State);
+
+    private static bool CanTerminal(ContainerRow row) => ContainerStates.IsRunning(row.State);
+
+    private static string ShortId(string containerId) =>
+        containerId.Length <= 12 ? containerId : containerId[..12];
+}

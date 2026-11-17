@@ -1,0 +1,260 @@
+@using System.Linq
+@using PanelFleet.Application.Containers
+
+<div class="drawer-backdrop" @onclick="CloseAsync"></div>
+
+<aside class="detail-drawer log-drawer @(Fullscreen ? "is-fullscreen" : null)"
+       role="dialog"
+       aria-label="容器日志"
+       aria-modal="true"
+       tabindex="-1"
+       @ref="_drawerElement"
+       @onkeydown="HandleKeyDown">
+    <div class="drawer-header">
+        <div class="drawer-title">
+            <h2>@Row.NodeName / @Row.Name 日志</h2>
+            <div class="muted small">
+                tail @Log?.Tail 行 · 时间范围 @Since · @(Timestamp ? "含时间戳" : "不含时间戳")
+                @if (Log is not null)
+                {
+                    <span> · 读取于 @Log.FetchedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+                }
+                @if (Live)
+                {
+                    <span class="log-live-flag"><span class="log-live-dot" aria-hidden="true"></span>实时刷新中</span>
+                }
+            </div>
+        </div>
+        <div class="log-head-actions">
+            <button type="button"
+                    class="btn btn-xs log-head-action @(Fullscreen ? "is-on" : null)"
+                    title="@(Fullscreen ? "退出全屏（Esc）" : "全屏查看日志")"
+                    aria-pressed="@Fullscreen"
+                    @onclick="ToggleFullscreenAsync">
+                @(Fullscreen ? "退出全屏" : "全屏")
+            </button>
+            <button type="button" class="drawer-close" title="关闭" aria-label="关闭" @onclick="CloseAsync">
+                <ContainerIcon Name="close" Size="18" />
+            </button>
+        </div>
+    </div>
+
+    <div class="drawer-body log-body">
+        <div class="log-toolbar">
+            <label class="toolbar-field">
+                <span class="toolbar-label">时间范围</span>
+                <select @bind="_sinceSelected">
+                    <option value="all">全部</option>
+                    <option value="24h">最近 24 小时</option>
+                    <option value="4h">最近 4 小时</option>
+                    <option value="1h">最近 1 小时</option>
+                    <option value="10m">最近 10 分钟</option>
+                </select>
+            </label>
+            <label class="toolbar-field">
+                <span class="toolbar-label">行数</span>
+                <select @bind="_tailSelected">
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                </select>
+            </label>
+            <label class="toolbar-field checkbox">
+                <input type="checkbox" @bind="_timestampSelected" />
+                <span>显示时间戳</span>
+            </label>
+            <button type="button"
+                    class="btn btn-xs log-toggle @(Follow ? "is-on" : null)"
+                    title="新日志追加时自动滚动到最新一行"
+                    aria-pressed="@Follow"
+                    @onclick="ToggleFollowAsync">
+                <ContainerIcon Name="logs" Size="14" />
+                <span>实时跟踪</span>
+            </button>
+            <button type="button"
+                    class="btn btn-xs log-toggle @(Live ? "is-on" : null)"
+                    title="每 2 秒自动刷新一次日志"
+                    aria-pressed="@Live"
+                    @onclick="ToggleLiveAsync">
+                <ContainerIcon Name="refresh" Size="14" />
+                <span>实时刷新</span>
+            </button>
+            <button type="button" class="btn log-refresh" @onclick="RefreshAsync" disabled="@Loading">
+                @if (Loading)
+                {
+                    <span class="log-spinner" aria-hidden="true"></span>
+                    <span>读取中…</span>
+                }
+                else
+                {
+                    <ContainerIcon Name="refresh" Size="15" />
+                    <span>刷新日志</span>
+                }
+            </button>
+        </div>
+
+        @if (Error is not null)
+        {
+            <div class="alert alert-error">@Error</div>
+        }
+
+        @if (Log is not null && Log.Truncated)
+        {
+            <div class="alert alert-warn">日志超过单次读取上限，较早内容已截断。</div>
+        }
+
+        @if (Loading && Log is null)
+        {
+            <div class="log-skeleton" aria-label="正在读取日志">
+                @for (var index = 0; index < 8; index++)
+                {
+                    <div class="log-skeleton-line" style="width: @(index % 4 == 0 ? "46%" : index % 3 == 0 ? "72%" : "92%")"></div>
+                }
+            </div>
+        }
+        else if (Log is null || Log.Lines.Count == 0)
+        {
+            <div class="log-output log-empty" tabindex="0">@(Loading ? "正在读取日志…" : "（无日志输出）")</div>
+        }
+        else if (Follow)
+        {
+            @* 最新日志渲染在最前面，再用 column-reverse 反转视觉顺序，滚动锚点自然停在底部。 *@
+            <div class="log-output log-lines is-follow" tabindex="0" aria-live="polite">
+                @foreach (var line in Log.Lines.Reverse())
+                {
+                    <div class="log-line">@(string.IsNullOrEmpty(line) ? " " : line)</div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="log-output log-lines" tabindex="0" aria-live="polite">
+                @foreach (var line in Log.Lines)
+                {
+                    <div class="log-line">@(string.IsNullOrEmpty(line) ? " " : line)</div>
+                }
+            </div>
+        }
+    </div>
+</aside>
+
+@code {
+    private string _sinceSelected = "all";
+    private int _tailSelected = 200;
+    private bool _timestampSelected;
+
+    private ElementReference _drawerElement;
+    private bool _focusPending = true;
+    private bool _lastFullscreen;
+    private string? _lastRowKey;
+
+    [Parameter, EditorRequired]
+    public ContainerRow Row { get; set; } = null!;
+
+    [Parameter]
+    public ContainerLogView? Log { get; set; }
+
+    [Parameter]
+    public bool Loading { get; set; }
+
+    [Parameter]
+    public string? Error { get; set; }
+
+    [Parameter]
+    public int Tail { get; set; } = 200;
+
+    [Parameter]
+    public string Since { get; set; } = "all";
+
+    [Parameter]
+    public bool Timestamp { get; set; }
+
+    /// <summary>开启后新日志到达时保持视口在最新一行（父组件控制）。</summary>
+    [Parameter]
+    public bool Follow { get; set; }
+
+    /// <summary>开启后父组件每 2 秒拉取一次日志（父组件控制）。</summary>
+    [Parameter]
+    public bool Live { get; set; }
+
+    /// <summary>全屏展示日志（Esc 或按钮退出）。</summary>
+    [Parameter]
+    public bool Fullscreen { get; set; }
+
+    [Parameter]
+    public EventCallback<(string Since, int Tail, bool Timestamp)> OnRefresh { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> OnToggleFollow { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> OnToggleLive { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> OnToggleFullscreen { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        _sinceSelected = Since;
+        _tailSelected = Tail;
+        _timestampSelected = Timestamp;
+
+        var rowKey = Row.NodeId.ToString("N") + "/" + Row.Name;
+        if (_lastRowKey != rowKey || _lastFullscreen != Fullscreen)
+        {
+            _lastRowKey = rowKey;
+            _lastFullscreen = Fullscreen;
+            _focusPending = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusPending)
+        {
+            return;
+        }
+
+        _focusPending = false;
+        try
+        {
+            await _drawerElement.FocusAsync();
+        }
+        catch (Exception)
+        {
+            // 预渲染或连接已断开时无法聚焦，忽略即可；Esc 仍可通过点击面板后生效。
+        }
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (!string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (Fullscreen)
+        {
+            await OnToggleFullscreen.InvokeAsync(false);
+        }
+        else
+        {
+            await OnClose.InvokeAsync();
+        }
+    }
+
+    private Task ToggleFollowAsync() => OnToggleFollow.InvokeAsync(!Follow);
+
+    private Task ToggleLiveAsync() => OnToggleLive.InvokeAsync(!Live);
+
+    private Task ToggleFullscreenAsync() => OnToggleFullscreen.InvokeAsync(!Fullscreen);
+
+    private Task RefreshAsync() =>
+        OnRefresh.InvokeAsync((_sinceSelected, _tailSelected, _timestampSelected));
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+}

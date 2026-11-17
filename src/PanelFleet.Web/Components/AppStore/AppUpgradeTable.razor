@@ -1,0 +1,122 @@
+@using PanelFleet.Application.AppStore
+@* 「可升级」聚合表：跨节点展示待升级应用，支持勾选后批量升级。 *@
+@if (Busy)
+{
+    <div class="skeleton-stack">
+        <div class="skeleton-row"></div>
+        <div class="skeleton-row"></div>
+        <div class="skeleton-row"></div>
+    </div>
+}
+else if (Rows.Count == 0)
+{
+    <p class="resource-empty">当前没有可升级的应用。</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="table upgrade-table">
+            <thead>
+                <tr>
+                    <th class="check-col">
+                        <input type="checkbox"
+                               aria-label="全选可升级应用"
+                               checked="@AllSelected"
+                               disabled="@(!AnySelectable)"
+                               @onchange="() => OnToggleAll.InvokeAsync(!AllSelected)" />
+                    </th>
+                    <th>节点</th>
+                    <th>应用</th>
+                    <th>当前版本</th>
+                    <th>最新版本</th>
+                    <th>状态</th>
+                    <th class="action-col">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Rows)
+                {
+                    var selected = SelectedKeys.Contains(row.Key);
+                    <tr class="@(selected ? "is-selected" : null)">
+                        <td class="check-col">
+                            <input type="checkbox"
+                                   aria-label="选择 @row.App.Name"
+                                   checked="@selected"
+                                   disabled="@(!row.CanSelect || Busy)"
+                                   @onchange="() => OnToggle.InvokeAsync(row)" />
+                        </td>
+                        <td>
+                            <span class="upgrade-node">@row.NodeName</span>
+                        </td>
+                        <td>
+                            <div class="upgrade-app">
+                                <span class="upgrade-app-name">@row.App.Name</span>
+                                <span class="muted small">@(row.App.AppName ?? row.App.AppKey)</span>
+                            </div>
+                        </td>
+                        <td>@row.CurrentVersion</td>
+                        <td>@row.LatestVersion</td>
+                        <td>
+                            @if (!string.IsNullOrWhiteSpace(row.Error))
+                            {
+                                <span class="badge badge-error">查询失败</span>
+                                <span class="muted small upgrade-error">@row.Error</span>
+                            }
+                            else if (row.Latest is not null)
+                            {
+                                <span class="badge badge-warn">可升级</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-unknown">无可用版本</span>
+                            }
+                        </td>
+                        <td class="action-col">
+                            <button class="btn"
+                                    type="button"
+                                    disabled="@(Busy || !row.CanSelect)"
+                                    @onclick="() => OnUpgrade.InvokeAsync(row)">
+                                升级
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    /// <summary>待升级应用行（跨节点聚合）。</summary>
+    [Parameter]
+    public IReadOnlyList<AppUpgradeCandidate> Rows { get; set; } = [];
+
+    /// <summary>加载/执行中。</summary>
+    [Parameter]
+    public bool Busy { get; set; }
+
+    /// <summary>当前勾选的行 Key 集合。</summary>
+    [Parameter]
+    public IReadOnlySet<string> SelectedKeys { get; set; } = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>勾选/取消单行。</summary>
+    [Parameter]
+    public EventCallback<AppUpgradeCandidate> OnToggle { get; set; }
+
+    /// <summary>全选/取消全选。</summary>
+    [Parameter]
+    public EventCallback<bool> OnToggleAll { get; set; }
+
+    /// <summary>升级单个应用。</summary>
+    [Parameter]
+    public EventCallback<AppUpgradeCandidate> OnUpgrade { get; set; }
+
+    /// <summary>刷新可升级列表。</summary>
+    [Parameter]
+    public EventCallback OnRefresh { get; set; }
+
+    private bool AnySelectable => Rows.Any(row => row.CanSelect);
+
+    private bool AllSelected =>
+        AnySelectable && Rows.Where(row => row.CanSelect).All(row => SelectedKeys.Contains(row.Key));
+}

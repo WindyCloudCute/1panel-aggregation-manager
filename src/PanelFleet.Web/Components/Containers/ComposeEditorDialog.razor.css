@@ -1,0 +1,65 @@
+.compose-editor-modal {
+    width: min(720px, 94vw);
+    max-height: 88vh;
+    overflow-y: auto;
+    border-radius: var(--radius-xl, 22px);
+}
+.compose-editor-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+.compose-editor-head h2 { margin: 0; }
+.compose-editor-sub { margin: 2px 0 10px; }
+.compose-yaml {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    resize: vertical;
+    tab-size: 2;
+}
+.compose-yaml:focus {
+    outline: 2px solid color-mix(in srgb, var(--primary) 30%, transparent);
+    outline-offset: 1px;
+    border-color: var(--primary);
+}
+.compose-yaml.compose-env { min-height: 84px; }
+.compose-editor-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.compose-editor-error { color: var(--error); font-size: 12px; }
+.compose-editor-check { margin: 4px 0 12px; }
+.compose-editor-loading { padding: 8px 0 16px; }
+.compose-skeleton-line {
+    height: 12px;
+    border-radius: var(--radius-sm, 8px);
+    background: var(--border);
+    margin-bottom: 8px;
+    animation: compose-pulse 1.4s ease-in-out infinite;
+}
+.compose-skeleton-line.is-short { width: 55%; }
+.compose-discard { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.compose-discard-actions { display: flex; gap: 8px; }
+.compose-load-warning { margin-bottom: 12px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-actions .btn:active { transform: scale(.97); }
+@keyframes compose-pulse {
+    0%, 100% { opacity: .45; }
+    50% { opacity: .9; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .compose-skeleton-line { animation: none; }
+    .modal-actions .btn:active { transform: none; }
+}

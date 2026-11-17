@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PanelFleet.Application/PanelFleet.Application.csproj" />
+    <Project Path="src/PanelFleet.Client/PanelFleet.Client.csproj" />
+    <Project Path="src/PanelFleet.Domain/PanelFleet.Domain.csproj" />
+    <Project Path="src/PanelFleet.Infrastructure/PanelFleet.Infrastructure.csproj" />
+    <Project Path="src/PanelFleet.Web/PanelFleet.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PanelFleet.Client.ContractTests/PanelFleet.Client.ContractTests.csproj" />
+    <Project Path="tests/PanelFleet.Client.UnitTests/PanelFleet.Client.UnitTests.csproj" />
+    <Project Path="tests/PanelFleet.IntegrationTests/PanelFleet.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

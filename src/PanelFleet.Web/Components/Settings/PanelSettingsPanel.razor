@@ -1,0 +1,327 @@
+@using PanelFleet.Web.Components.Settings
+@using PanelFleet.Domain.Model
+
+@* 1Panel 面板设置：只读信息卡 + 安全写表单；写操作一律由页面走写操作内核（预览/确认/执行）。 *@
+<div class="panel-settings">
+    @if (Model is not null)
+    {
+        <div class="settings-panel-header">
+            <div>
+                <h2>@Model.NodeName · 1Panel 面板设置</h2>
+                <p class="muted small">数据实时读取自该节点；写操作需要二次确认，端口/安全入口请到 1Panel 面板修改。</p>
+            </div>
+            <div class="settings-panel-actions">
+                @if (!string.IsNullOrWhiteSpace(Model.PanelUrl))
+                {
+                    <a class="btn" href="@Model.PanelUrl" target="_blank" rel="noopener noreferrer">打开 1Panel</a>
+                }
+                <button type="button" class="btn" @onclick="() => OnReload.InvokeAsync()" disabled="@Busy">
+                    <span class="icon-refresh" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false">
+                            <path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </span>
+                    重新读取
+                </button>
+            </div>
+        </div>
+
+        @if (Busy)
+        {
+            <div class="settings-inline-loading" role="status">
+                <span class="spinner" aria-hidden="true"></span>
+                <span>正在读取面板设置…</span>
+            </div>
+        }
+    }
+
+    @if (Loading)
+    {
+        <StatePanel Tone="loading" Title="正在读取面板设置…" Description="从 1Panel 实时读取设置，不做缓存。" />
+    }
+    else if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <StatePanel Tone="error"
+                    Title="读取面板设置失败"
+                    Description="@Error"
+                    Retry="() => OnReload.InvokeAsync()" />
+    }
+    else if (Model is null)
+    {
+        <StatePanel Tone="neutral"
+                    Title="请选择左侧节点"
+                    Description="选择节点后显示该 1Panel 面板的设置；只读展示，不会修改 1Panel 配置。" />
+    }
+    else
+    {
+        <div class="settings-card-grid">
+            <section class="card settings-card">
+                <h3>只读信息</h3>
+                <p class="muted small">这些值来自 1Panel 实时读取，端口与安全入口需在 1Panel 面板修改。</p>
+                <dl class="settings-readonly-list">
+                    <div>
+                        <dt>面板名称</dt>
+                        <dd>@ValueOrDash(Model.PanelName)</dd>
+                    </div>
+                    <div>
+                        <dt>版本</dt>
+                        <dd>@ValueOrDash(Model.SystemVersion)@(string.IsNullOrWhiteSpace(Model.Edition) ? string.Empty : $"（{Model.Edition}）")</dd>
+                    </div>
+                    <div>
+                        <dt>面板端口</dt>
+                        <dd>@ValueOrDash(Model.ServerPort)</dd>
+                    </div>
+                    <div>
+                        <dt>安全入口</dt>
+                        <dd>@(Model.HasSecurityEntrance ? (string.IsNullOrWhiteSpace(Model.SecurityEntranceHint) ? "已设置" : Model.SecurityEntranceHint) : "未设置")</dd>
+                    </div>
+                    <div>
+                        <dt>绑定地址</dt>
+                        <dd>@ValueOrDash(Model.BindAddress)</dd>
+                    </div>
+                    <div>
+                        <dt>默认网站目录</dt>
+                        <dd>@ValueOrDash(Model.DefaultWebsiteDirectory)</dd>
+                    </div>
+                    <div>
+                        <dt>多因素认证</dt>
+                        <dd>
+                            <span class="badge @(Model.MfaEnabled ? "badge-ok" : "badge-unknown")">@(Model.MfaEnabled ? "已启用" : "未启用")</span>
+                        </dd>
+                    </div>
+                    <div>
+                        <dt>API 接口</dt>
+                        <dd>
+                            <span class="badge @(Model.ApiEnabled ? "badge-ok" : "badge-unknown")">@(Model.ApiEnabled ? "已开启" : "已关闭")</span>
+                        </dd>
+                    </div>
+                    <div>
+                        <dt>终端按钮</dt>
+                        <dd>
+                            <span class="badge @(Model.TerminalEnabled ? "badge-ok" : "badge-unknown")">@(Model.TerminalEnabled ? "已开启" : "已关闭")</span>
+                        </dd>
+                    </div>
+                    <div>
+                        <dt>面板 SSL</dt>
+                        <dd>
+                            @if (!Model.SslEnabled)
+                            {
+                                <span class="badge badge-unknown">未开启</span>
+                            }
+                            else
+                            {
+                                <span class="badge @SslBadgeClass">@SslStatusText</span>
+                                @if (Model.SslExpiresAt is not null)
+                                {
+                                    <span class="muted small ssl-expiry">@Model.SslExpiresAt.Value.ToLocalTime().ToString("yyyy-MM-dd") 到期</span>
+                                }
+                            }
+                        </dd>
+                    </div>
+                </dl>
+                @if (SslExpiringSoon)
+                {
+                    <div class="alert alert-warn" role="status">面板 SSL 证书将在 30 天内到期，请尽快在 1Panel 中续期。</div>
+                }
+            </section>
+
+            <section class="card settings-card">
+                <h3>面板名称</h3>
+                <p class="muted small">风险等级：中；保存后立即在 1Panel 生效。</p>
+                <label class="settings-field">
+                    <span class="settings-field-label">新名称</span>
+                    <span class="settings-field-input">
+                        <input @bind="_newName" maxlength="30" disabled="@Busy" placeholder="例如 生产面板" />
+                    </span>
+                    @if (_nameError is not null)
+                    {
+                        <span class="field-error">@_nameError</span>
+                    }
+                </label>
+                <div class="actions">
+                    <button type="button" class="btn btn-primary" @onclick="SubmitRename" disabled="@(!CanRename)">
+                        保存名称
+                    </button>
+                </div>
+            </section>
+
+            <section class="card settings-card">
+                <h3>修改面板密码</h3>
+                <p class="muted small">风险等级：高；密码只用于本次提交，不会记录或回显。修改后请同步更新节点凭据（如使用密码登录）。</p>
+                <label class="settings-field">
+                    <span class="settings-field-label">当前密码</span>
+                    <span class="settings-field-input">
+                        <input type="password" @bind="_oldPassword" autocomplete="current-password" disabled="@Busy" />
+                    </span>
+                </label>
+                <label class="settings-field">
+                    <span class="settings-field-label">新密码</span>
+                    <span class="settings-field-input">
+                        <input type="password" @bind="_newPassword" autocomplete="new-password" disabled="@Busy" />
+                    </span>
+                </label>
+                <label class="settings-field">
+                    <span class="settings-field-label">确认新密码</span>
+                    <span class="settings-field-input">
+                        <input type="password" @bind="_confirmPassword" autocomplete="new-password" disabled="@Busy" />
+                    </span>
+                    @if (_passwordError is not null)
+                    {
+                        <span class="field-error">@_passwordError</span>
+                    }
+                </label>
+                <div class="actions">
+                    <button type="button" class="btn btn-danger" @onclick="SubmitPassword" disabled="@(!CanSubmitPassword)">
+                        修改密码
+                    </button>
+                </div>
+            </section>
+
+            <section class="card settings-card">
+                <h3>接口与终端开关</h3>
+                <p class="muted small">修改会走写操作内核：预览 → 输入确认文本 → 执行，并记录审计。</p>
+
+                <label class="settings-switch">
+                    <input type="checkbox" checked="@Model.ApiEnabled" @onchange="ToggleApiAsync" disabled="@Busy" />
+                    <span class="settings-switch-track" aria-hidden="true"></span>
+                    <span class="settings-switch-text">
+                        <strong>API 接口</strong>
+                        <span class="muted small">风险等级：高；开启后 1Panel API 可被外部调用。</span>
+                    </span>
+                </label>
+
+                <label class="settings-switch">
+                    <input type="checkbox" checked="@Model.TerminalEnabled" @onchange="ToggleTerminalAsync" disabled="@Busy" />
+                    <span class="settings-switch-track" aria-hidden="true"></span>
+                    <span class="settings-switch-text">
+                        <strong>面板终端按钮</strong>
+                        <span class="muted small">风险等级：中；关闭后 1Panel 页面隐藏终端入口。</span>
+                    </span>
+                </label>
+            </section>
+
+            <section class="card settings-card settings-warning-card">
+                <h3>端口与安全入口</h3>
+                <div class="alert alert-warn">
+                    端口和安全入口的修改会立即断开 PanelFleet 与面板的连接，因此不提供自动修改。
+                    请到 1Panel 面板操作，并在修改后同步更新节点的接入地址。
+                </div>
+                @if (!string.IsNullOrWhiteSpace(Model.PanelUrl))
+                {
+                    <a class="link-button" href="@Model.PanelUrl" target="_blank" rel="noopener noreferrer">前往 1Panel 面板</a>
+                }
+            </section>
+        </div>
+    }
+</div>
+
+@code {
+    private string _newName = string.Empty;
+    private string _oldPassword = string.Empty;
+    private string _newPassword = string.Empty;
+    private string _confirmPassword = string.Empty;
+    private string? _nameError;
+    private string? _passwordError;
+
+    [Parameter]
+    public PanelSettingsModel? Model { get; set; }
+
+    [Parameter]
+    public bool Loading { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public string? Error { get; set; }
+
+    /// <summary>重新读取该节点设置。</summary>
+    [Parameter]
+    public EventCallback OnReload { get; set; }
+
+    /// <summary>改面板名称（风险 Medium，由页面预览后确认执行）。</summary>
+    [Parameter]
+    public EventCallback<string> OnRename { get; set; }
+
+    /// <summary>改密码（风险 High，由页面预览后确认执行；密码只随本次回调传递）。</summary>
+    [Parameter]
+    public EventCallback<PasswordChangeRequest> OnChangePassword { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> OnToggleApi { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> OnToggleTerminal { get; set; }
+
+    /// <summary>密码修改请求（旧密码仅用于 1Panel 校验，前端不保存）。</summary>
+    public sealed record PasswordChangeRequest(string OldPassword, string NewPassword);
+
+    protected override void OnParametersSet()
+    {
+        if (Model is not null)
+        {
+            _newName = Model.PanelName ?? string.Empty;
+        }
+    }
+
+    private string SslStatusText => Model?.SslExpiresAt is { } expires
+        ? (expires <= DateTimeOffset.Now ? "已过期" : expires <= DateTimeOffset.Now.AddDays(30) ? "即将到期" : "已开启")
+        : "已开启";
+
+    private string SslBadgeClass => Model?.SslExpiresAt is { } expires
+        ? (expires <= DateTimeOffset.Now ? "badge-error" : expires <= DateTimeOffset.Now.AddDays(30) ? "badge-warn" : "badge-ok")
+        : "badge-ok";
+
+    private bool SslExpiringSoon => Model is { SslEnabled: true, SslExpiresAt: { } expires }
+        && expires <= DateTimeOffset.Now.AddDays(30);
+
+    private bool CanRename =>
+        !Busy
+        && !string.IsNullOrWhiteSpace(_newName)
+        && _newName.Trim().Length <= 30
+        && !string.Equals(_newName.Trim(), Model?.PanelName ?? string.Empty, StringComparison.Ordinal);
+
+    private bool CanSubmitPassword =>
+        !Busy
+        && !string.IsNullOrEmpty(_oldPassword)
+        && _newPassword.Length >= 8
+        && string.Equals(_newPassword, _confirmPassword, StringComparison.Ordinal);
+
+    private async Task SubmitRename()
+    {
+        _nameError = string.IsNullOrWhiteSpace(_newName)
+            ? "名称不能为空"
+            : _newName.Trim().Length > 30 ? "名称不能超过 30 个字符" : null;
+        if (_nameError is not null || !CanRename)
+        {
+            return;
+        }
+
+        await OnRename.InvokeAsync(_newName.Trim());
+    }
+
+    private async Task SubmitPassword()
+    {
+        _passwordError = _newPassword.Length < 8
+            ? "新密码至少 8 个字符"
+            : !string.Equals(_newPassword, _confirmPassword, StringComparison.Ordinal) ? "两次输入的新密码不一致" : null;
+        if (_passwordError is not null || !CanSubmitPassword)
+        {
+            return;
+        }
+
+        var request = new PasswordChangeRequest(_oldPassword, _newPassword);
+        _oldPassword = string.Empty;
+        _newPassword = string.Empty;
+        _confirmPassword = string.Empty;
+        await OnChangePassword.InvokeAsync(request);
+    }
+
+    private Task ToggleApiAsync(ChangeEventArgs args) =>
+        args.Value is bool enabled ? OnToggleApi.InvokeAsync(enabled) : Task.CompletedTask;
+
+    private Task ToggleTerminalAsync(ChangeEventArgs args) =>
+        args.Value is bool enabled ? OnToggleTerminal.InvokeAsync(enabled) : Task.CompletedTask;
+
+    private static string ValueOrDash(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value;
+}

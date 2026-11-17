@@ -1,0 +1,32 @@
+@page "/terminal"
+@attribute [Authorize(Policy = AuthSetup.AdminPolicy)]
+@using PanelFleet.Web.Components.Terminal
+@inject PanelFleet.Application.Terminal.TerminalOptions TerminalOptions
+
+<PageTitle>终端</PageTitle>
+
+<div class="page-header">
+    <h1>终端</h1>
+    <div class="actions">
+        <span class="muted small">仅管理员可用 · 会话开始/结束审计 · 不记录输入内容</span>
+    </div>
+</div>
+
+@if (NodeId is null)
+{
+    <TerminalPicker Enabled="@TerminalOptions.Enabled" />
+}
+else
+{
+    <TerminalPanel NodeId="@NodeId" Container="@Container" Enabled="@TerminalOptions.Enabled" />
+}
+
+@code {
+    /// <summary>要连接的节点（来自 query：/terminal?nodeId=...）。</summary>
+    [SupplyParameterFromQuery(Name = "nodeId")]
+    public Guid? NodeId { get; set; }
+
+    /// <summary>容器名或容器 ID（来自 query：/terminal?nodeId=...&amp;container=...）；为空即主机终端。</summary>
+    [SupplyParameterFromQuery(Name = "container")]
+    public string? Container { get; set; }
+}

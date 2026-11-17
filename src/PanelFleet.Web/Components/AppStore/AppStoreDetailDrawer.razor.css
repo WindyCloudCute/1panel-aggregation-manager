@@ -1,0 +1,136 @@
+/* 应用详情抽屉；颜色使用 app.css 语义令牌，缺省时带 fallback。 */
+.drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-drawer, 90);
+    display: flex;
+    justify-content: flex-end;
+    background: var(--drawer-backdrop, rgba(15, 23, 42, .35));
+}
+
+.appstore-detail-drawer {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: min(560px, 96vw);
+    height: 100%;
+    padding: 20px 24px 28px;
+    overflow-y: auto;
+    background: var(--panel);
+    box-shadow: var(--shadow-lg, -4px 0 16px rgba(15, 23, 42, .15));
+    animation: appstore-drawer-in var(--dur, 200ms) var(--ease-out, ease) both;
+}
+
+.drawer-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 12px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.drawer-head-main {
+    min-width: 0;
+}
+
+.drawer-head h2 {
+    margin: 0 0 4px;
+    font-size: 1.15rem;
+}
+
+.drawer-head .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.drawer-section {
+    padding-top: 14px;
+    margin-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.drawer-section h3 {
+    margin: 0 0 10px;
+    font-size: .98rem;
+}
+
+.detail-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.app-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    flex: none;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--primary);
+    background: var(--primary-soft, var(--bg));
+    border-radius: var(--radius-md, 12px);
+}
+
+.detail-title-copy {
+    min-width: 0;
+}
+
+.detail-title-copy h3 {
+    margin: 0 0 2px;
+    font-size: 1rem;
+}
+
+.detail-badges,
+.version-badges,
+.link-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.detail-desc {
+    line-height: 1.6;
+    margin: 0 0 8px;
+    white-space: pre-wrap;
+}
+
+.detail-code {
+    max-height: 320px;
+    padding: 12px;
+    overflow: auto;
+    font-size: .82rem;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 8px);
+}
+
+.link-list .btn {
+    text-decoration: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .appstore-detail-drawer {
+        animation: none;
+    }
+}
+
+@keyframes appstore-drawer-in {
+    from {
+        opacity: 0;
+        transform: translateX(16px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}

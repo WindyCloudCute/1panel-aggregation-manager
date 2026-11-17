@@ -1,0 +1,7 @@
+@* 轻量加载指示器：与文字并排使用，例如「采集…」。纯 CSS 旋转，遵循 reduced-motion。 *@
+<span class="spinner" role="status" aria-label="@Label"></span>
+
+@code {
+    [Parameter]
+    public string Label { get; set; } = "加载中";
+}

@@ -1,0 +1,214 @@
+@using PanelFleet.Application.Websites
+@inject WebsiteService WebsiteService
+
+<div class="modal-backdrop" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="modal website-modal ssl-request-dialog" @onclick:stopPropagation="true">
+        <h2>申请 SSL 证书</h2>
+        <p class="muted small">
+            为网站域名创建证书并提交 ACME 申请；申请依赖域名解析与 1Panel ACME 账户配置，可能需要数分钟。
+        </p>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-error" role="alert">@_error</div>
+        }
+
+        <div class="form-row">
+            <label class="form-label">主域名 <span class="required">*</span></label>
+            <input @bind="_primaryDomain" @bind:event="oninput" maxlength="253" disabled="@Busy" />
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">其他域名</label>
+            <textarea @bind="_otherDomainsText" rows="2" placeholder="每行一个，或用逗号分隔" disabled="@Busy"></textarea>
+            <span class="muted small">可选，最多 20 个；证书会包含这些域名（SAN）。</span>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">验证方式 <span class="required">*</span></label>
+            <select @bind="_provider" disabled="@Busy">
+                <option value="http">HTTP 文件验证（自动）</option>
+                <option value="dnsManual">手动 DNS（创建后需自行添加 TXT 记录）</option>
+                <option value="dnsAccount">DNS 账户自动验证</option>
+            </select>
+            @if (_provider == "dnsManual")
+            {
+                <span class="muted small">此方式只创建证书记录；需到 1Panel 添加 DNS TXT 记录后手动申请。</span>
+            }
+        </div>
+
+        @if (_provider == "dnsAccount")
+        {
+            <div class="form-row">
+                <label class="form-label">DNS 账户 ID <span class="required">*</span></label>
+                <input type="number" min="1" @bind="_dnsAccountId" disabled="@Busy" />
+                <span class="muted small">请输入 1Panel 中已配置的 DNS 账户 ID。</span>
+            </div>
+        }
+
+        <div class="form-row">
+            <label class="form-label">ACME 账户 <span class="required">*</span></label>
+            <select @bind="_acmeAccountId" disabled="@Busy">
+                <option value="0">请选择 ACME 账户…</option>
+                @foreach (var account in _acmeAccounts)
+                {
+                    <option value="@account.Id">@(account.Email ?? $"账户 #{account.Id}")@(account.IsDefault ? "（默认）" : string.Empty)</option>
+                }
+            </select>
+            @if (_loading)
+            {
+                <span class="muted small">正在加载 ACME 账户…</span>
+            }
+            else if (_acmeAccounts.Count == 0)
+            {
+                <span class="muted small">该节点没有 ACME 账户；请先在 1Panel 中配置 ACME 账户。</span>
+            }
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">密钥类型</label>
+            <select @bind="_keyType" disabled="@Busy">
+                <option value="P256">P256（ECDSA）</option>
+                <option value="RSA2048">RSA 2048</option>
+                <option value="RSA4096">RSA 4096</option>
+            </select>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">备注</label>
+            <input @bind="_description" maxlength="128" disabled="@Busy" />
+        </div>
+
+        <div class="form-row checkbox-row">
+            <label class="checkbox-inline">
+                <input type="checkbox" @bind="_autoRenew" disabled="@Busy" />
+                <span>自动续期</span>
+            </label>
+        </div>
+
+        <div class="alert alert-warn">
+            证书申请会创建证书记录并发起 ACME 请求；失败不会自动删除记录，可重新申请或删除证书。申请过程不会自动回滚。
+        </div>
+
+        <div class="modal-actions">
+            <button type="button" class="btn" @onclick="() => OnCancel.InvokeAsync()" disabled="@Busy">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@Busy">
+                @(Busy ? "处理中…" : "预览确认")
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _primaryDomain = string.Empty;
+    private string _otherDomainsText = string.Empty;
+    private string _provider = "http";
+    private long _dnsAccountId;
+    private long _acmeAccountId;
+    private string _keyType = "P256";
+    private string _description = string.Empty;
+    private bool _autoRenew = true;
+    private bool _loading;
+    private bool _initialized;
+    private string? _error;
+    private IReadOnlyList<WebsiteAcmeAccount> _acmeAccounts = [];
+
+    [Parameter]
+    public Guid NodeId { get; set; }
+
+    [Parameter]
+    public string PrimaryDomain { get; set; } = string.Empty;
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<SslRequestResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private IReadOnlyList<string> OtherDomains =>
+        _otherDomainsText
+            .Split([',', '，', ';', '；', '\n', '\r', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(domain => !string.Equals(domain, _primaryDomain.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .ToArray();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_initialized)
+        {
+            return;
+        }
+
+        _initialized = true;
+        _primaryDomain = PrimaryDomain;
+        await LoadAcmeAccountsAsync();
+    }
+
+    private async Task LoadAcmeAccountsAsync()
+    {
+        if (NodeId == Guid.Empty)
+        {
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            _acmeAccounts = await WebsiteService.GetAcmeAccountsAsync(NodeId, CancellationToken.None);
+            var preferred = _acmeAccounts.FirstOrDefault(account => account.IsDefault) ?? _acmeAccounts.FirstOrDefault();
+            _acmeAccountId = preferred?.Id ?? 0;
+        }
+        catch (Exception exception)
+        {
+            _acmeAccounts = [];
+            _error = "加载 ACME 账户失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (NodeId == Guid.Empty)
+        {
+            _error = "缺少目标节点。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_primaryDomain))
+        {
+            _error = "请填写主域名。";
+            return;
+        }
+
+        if (_acmeAccountId <= 0)
+        {
+            _error = "请选择 ACME 账户。";
+            return;
+        }
+
+        if (_provider == "dnsAccount" && _dnsAccountId <= 0)
+        {
+            _error = "使用 DNS 账户申请时，请填写 DNS 账户 ID。";
+            return;
+        }
+
+        _error = null;
+        await OnSubmit.InvokeAsync(new SslRequestResult(
+            NodeId,
+            _primaryDomain.Trim(),
+            OtherDomains,
+            _provider,
+            _acmeAccountId,
+            _provider == "dnsAccount" ? _dnsAccountId : 0,
+            string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
+            _autoRenew,
+            _keyType));
+    }
+}

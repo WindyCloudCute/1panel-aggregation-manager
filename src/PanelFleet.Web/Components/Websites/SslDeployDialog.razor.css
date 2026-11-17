@@ -1,0 +1,32 @@
+.website-modal {
+    width: min(560px, 94vw);
+    max-height: 86vh;
+    overflow-y: auto;
+}
+
+.website-modal h2 {
+    margin-top: 0;
+}
+
+.form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.form-label {
+    font-weight: 600;
+    color: #374151;
+}
+
+.required {
+    color: var(--error);
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}

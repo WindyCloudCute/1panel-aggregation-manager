@@ -1,0 +1,168 @@
+@using PanelFleet.Web.Components.Navigation
+
+@* 递归渲染单个树节点；展开态用 grid-template-rows 过渡实现无 JS 平滑展开。 *@
+<div class="nav-tree-item" role="treeitem" aria-selected="@(IsSelected ? "true" : "false")">
+    @if (Node.IsLeaf)
+    {
+        <button type="button"
+                class="nav-tree-leaf @(IsSelected ? "is-selected" : string.Empty)"
+                disabled="@Node.IsDisabled"
+                title="@Node.Hint"
+                @onclick="SelectAsync">
+            <span class="nav-tree-leaf-label">@Node.Label</span>
+            @if (!string.IsNullOrWhiteSpace(Node.BadgeText))
+            {
+                <span class="badge @Node.BadgeClass">@Node.BadgeText</span>
+            }
+            @if (!string.IsNullOrWhiteSpace(Node.Hint))
+            {
+                <span class="nav-tree-hint">@Node.Hint</span>
+            }
+        </button>
+    }
+    else
+    {
+        <div class="nav-tree-branch">
+            <div class="nav-tree-branch-row @(IsSelected ? "is-selected" : string.Empty) @(Node.IsDisabled ? "is-disabled" : string.Empty)">
+                <button type="button"
+                        class="nav-tree-toggle"
+                        aria-expanded="@(_open ? "true" : "false")"
+                        aria-label="@(_open ? "收起" : "展开")"
+                        @onclick="ToggleAsync">
+                    <span class="nav-tree-chevron @(_open ? "is-open" : string.Empty)" aria-hidden="true"></span>
+                </button>
+                <button type="button"
+                        class="nav-tree-branch-label"
+                        disabled="@Node.IsDisabled"
+                        title="@Node.Hint"
+                        @onclick="OnBranchLabelClickAsync">
+                    <span class="nav-tree-branch-text">@Node.Label</span>
+                    @if (!string.IsNullOrWhiteSpace(Node.BadgeText))
+                    {
+                        <span class="badge @Node.BadgeClass">@Node.BadgeText</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(Node.Hint))
+                    {
+                        <span class="nav-tree-hint">@Node.Hint</span>
+                    }
+                </button>
+                @if (Node.IsLoading)
+                {
+                    <span class="nav-tree-spinner" aria-label="加载中"></span>
+                }
+                @if (!string.IsNullOrWhiteSpace(Node.Error))
+                {
+                    <span class="nav-tree-error" title="@Node.Error">加载失败</span>
+                }
+            </div>
+
+            <div class="nav-tree-children @(_open ? "is-open" : string.Empty)">
+                <div class="nav-tree-children-inner">
+                    @if (Node.Children.Count == 0)
+                    {
+                        <p class="nav-tree-hint nav-tree-empty-child">
+                            @(Node.ChildrenLoaded ? "暂无子项" : "展开以加载…")
+                        </p>
+                    }
+                    @foreach (var child in VisibleChildren)
+                    {
+                        <NavTreeNodeView Node="child"
+                                         Depth="Depth + 1"
+                                         SelectedId="@SelectedId"
+                                         Filter="@Filter"
+                                         SelectableBranches="SelectableBranches"
+                                         OnSelect="OnSelect"
+                                         OnToggle="OnToggle" />
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public NavTreeNode Node { get; set; } = default!;
+
+    [Parameter]
+    public int Depth { get; set; }
+
+    [Parameter]
+    public string? SelectedId { get; set; }
+
+    [Parameter]
+    public string? Filter { get; set; }
+
+    [Parameter]
+    public bool SelectableBranches { get; set; }
+
+    [Parameter]
+    public EventCallback<NavTreeNode> OnSelect { get; set; }
+
+    [Parameter]
+    public EventCallback<NavTreeNode> OnToggle { get; set; }
+
+    private bool _open;
+
+    private bool IsSelected => string.Equals(SelectedId, Node.Id, StringComparison.Ordinal);
+
+    private bool HasFilter => !string.IsNullOrWhiteSpace(Filter);
+
+    private bool IsOpen => _open || HasFilter || Node.DefaultExpanded;
+
+    private IReadOnlyList<NavTreeNode> VisibleChildren =>
+        HasFilter
+            ? Node.Children.Where(child => child.Matches(Filter)).ToArray()
+            : Node.Children;
+
+    protected override void OnInitialized()
+    {
+        _open = Node.DefaultExpanded;
+    }
+
+    protected override void OnParametersSet()
+    {
+        // 页面异步加载完子项后，自动展开；页面也可通过 DefaultExpanded 控制。
+        if (Node.DefaultExpanded)
+        {
+            _open = true;
+        }
+    }
+
+    private async Task ToggleAsync()
+    {
+        _open = !IsOpen;
+
+        if (_open && !Node.ChildrenLoaded && !Node.IsLoading)
+        {
+            await OnToggle.InvokeAsync(Node);
+        }
+    }
+
+    private async Task OnBranchLabelClickAsync()
+    {
+        if (Node.IsDisabled)
+        {
+            return;
+        }
+
+        if (SelectableBranches)
+        {
+            await OnSelect.InvokeAsync(Node);
+        }
+        else if (Node.IsLeaf is false)
+        {
+            await ToggleAsync();
+        }
+    }
+
+    private Task SelectAsync()
+    {
+        if (Node.IsDisabled)
+        {
+            return Task.CompletedTask;
+        }
+
+        return OnSelect.InvokeAsync(Node);
+    }
+}

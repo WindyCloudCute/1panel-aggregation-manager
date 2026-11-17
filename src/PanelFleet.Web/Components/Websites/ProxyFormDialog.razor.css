@@ -1,0 +1,53 @@
+.proxy-modal {
+    width: min(760px, 96vw);
+    max-height: 88vh;
+    overflow-y: auto;
+}
+
+.proxy-modal h2 {
+    margin-top: 0;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 4px 16px;
+}
+
+.form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.form-row.checkbox-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.form-label {
+    font-weight: 600;
+    color: #374151;
+}
+
+.required {
+    color: var(--error);
+}
+
+.checkbox-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-inline input {
+    min-width: auto;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}

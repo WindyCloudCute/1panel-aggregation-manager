@@ -1,0 +1,76 @@
+﻿@* 统一状态面板：加载（骨架屏）/ 空态 / 错误（可重试）。供各页面复用，避免每页各写一套。 *@
+<div class="state-panel state-@ToneClass" role="@(IsError ? "alert" : null)">
+    @if (IsLoading)
+    {
+        <div class="state-skeleton" aria-hidden="true">
+            <span class="skeleton skeleton-title"></span>
+            <span class="skeleton skeleton-line"></span>
+            <span class="skeleton skeleton-line"></span>
+            <span class="skeleton skeleton-line skeleton-line-short"></span>
+        </div>
+    }
+    else
+    {
+        <span class="state-icon" aria-hidden="true">
+            @if (IsError)
+            {
+                <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M12 8.6v5.2M12 17.2v.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    <path d="M10.3 3.9 2.6 17.1a1.8 1.8 0 0 0 1.6 2.7h15.6a1.8 1.8 0 0 0 1.6-2.7L13.7 3.9a1.9 1.9 0 0 0-3.4 0Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                </svg>
+            }
+            else
+            {
+                <svg viewBox="0 0 24 24" focusable="false">
+                    <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.5" />
+                    <path d="M12 11v5.2M12 7.8v.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                </svg>
+            }
+        </span>
+    }
+
+    <h2 class="state-title">@Title</h2>
+
+    @if (!string.IsNullOrWhiteSpace(Description))
+    {
+        <p class="state-description">@Description</p>
+    }
+
+    @if (ChildContent is not null || Retry.HasDelegate)
+    {
+        <div class="state-actions">
+            @ChildContent
+            @if (Retry.HasDelegate)
+            {
+                <button type="button" class="btn btn-primary" @onclick="Retry">重试</button>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>状态风格：neutral（空态）/ loading（骨架屏）/ error（错误）。</summary>
+    [Parameter]
+    public string Tone { get; set; } = "neutral";
+
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public string? Description { get; set; }
+
+    /// <summary>额外操作按钮（例如「添加节点」链接）。</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>提供后渲染「重试」按钮。</summary>
+    [Parameter]
+    public EventCallback Retry { get; set; }
+
+    private bool IsLoading => string.Equals(Tone, "loading", StringComparison.OrdinalIgnoreCase);
+
+    private bool IsError => string.Equals(Tone, "error", StringComparison.OrdinalIgnoreCase);
+
+    private string ToneClass => IsLoading ? "loading" : IsError ? "error" : "neutral";
+}
+

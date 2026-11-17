@@ -1,0 +1,16 @@
+@page "/websites"
+@attribute [Authorize]
+@using PanelFleet.Web.Components.Websites
+
+<PageTitle>网站管理</PageTitle>
+
+<WebsiteWorkspace NodeIdQuery="NodeId"
+                  WebsiteIdQuery="WebsiteId" />
+
+@code {
+    [SupplyParameterFromQuery(Name = "nodeId")]
+    private Guid? NodeId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "id")]
+    private long? WebsiteId { get; set; }
+}

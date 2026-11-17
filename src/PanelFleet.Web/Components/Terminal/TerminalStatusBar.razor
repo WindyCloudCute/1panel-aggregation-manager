@@ -1,0 +1,66 @@
+@using PanelFleet.Application.Terminal
+
+<div class="terminal-status">
+    <span class="terminal-status-dot @DotClass"></span>
+    <span class="terminal-status-text">@StatusText</span>
+
+    @if (!string.IsNullOrEmpty(NodeName))
+    {
+        <span class="terminal-badge">节点 @NodeName</span>
+    }
+
+    @if (ContainerMode)
+    {
+        <span class="terminal-badge terminal-badge-container">容器 @Container</span>
+    }
+    else if (Connected)
+    {
+        <span class="terminal-badge">主机</span>
+    }
+
+    @if (FallbackMode)
+    {
+        <span class="terminal-badge terminal-badge-warn" title="xterm.js 本地资源不可用，已降级为零依赖简易终端">简易模式</span>
+    }
+
+    @if (LatencyMs is { } latency)
+    {
+        <span class="terminal-badge">@latency ms</span>
+    }
+</div>
+
+@code {
+    /// <summary>连接状态：idle / connecting / connected / closed / error。</summary>
+    [Parameter]
+    public string Status { get; set; } = "idle";
+
+    [Parameter]
+    public string StatusText { get; set; } = "未连接";
+
+    [Parameter]
+    public string? NodeName { get; set; }
+
+    [Parameter]
+    public bool ContainerMode { get; set; }
+
+    [Parameter]
+    public string? Container { get; set; }
+
+    [Parameter]
+    public bool Connected { get; set; }
+
+    [Parameter]
+    public bool FallbackMode { get; set; }
+
+    [Parameter]
+    public int? LatencyMs { get; set; }
+
+    private string DotClass => Status switch
+    {
+        "connected" => "terminal-status-dot-ok",
+        "connecting" => "terminal-status-dot-busy",
+        "error" => "terminal-status-dot-error",
+        "closed" => "terminal-status-dot-idle",
+        _ => "terminal-status-dot-idle"
+    };
+}

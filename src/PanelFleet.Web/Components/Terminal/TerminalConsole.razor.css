@@ -1,0 +1,56 @@
+/* 终端画布：深色终端表面。颜色保留为终端主题变量，带 fallback 以兼容 app.css 令牌更新。 */
+
+.terminal-surface {
+    position: relative;
+    min-height: 380px;
+    height: calc(100vh - 340px);
+    padding: 10px 12px;
+    border-radius: var(--radius-lg, 16px);
+    background: var(--terminal-bg, #111827);
+    border: 1px solid var(--terminal-border, #1f2937);
+    box-shadow: var(--shadow-md, 0 8px 24px rgba(15, 23, 42, 0.16));
+    overflow: hidden;
+}
+
+.terminal-surface ::deep .pf-terminal-host,
+.terminal-surface ::deep .xterm {
+    height: 100%;
+}
+
+.terminal-surface ::deep .xterm-viewport {
+    background-color: transparent !important;
+}
+
+.terminal-surface ::deep .pf-simple-terminal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: 8px;
+}
+
+.terminal-surface ::deep .pf-simple-output {
+    flex: 1;
+    margin: 0;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--terminal-text, #e5e7eb);
+    font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.terminal-surface ::deep .pf-simple-input {
+    padding: 8px 10px;
+    border: 1px solid var(--terminal-border, #374151);
+    border-radius: var(--radius-md, 10px);
+    background: var(--terminal-input-bg, #0b1220);
+    color: var(--terminal-text, #e5e7eb);
+    font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
+}
+
+@media (max-width: 1024px) {
+    .terminal-surface {
+        height: calc(100vh - 300px);
+    }
+}

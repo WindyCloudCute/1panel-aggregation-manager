@@ -1,0 +1,144 @@
+@using PanelFleet.Application.Logs
+
+@if (Result is null)
+{
+    <p class="muted">@(Loading ? "正在查询日志…" : "选择查询条件后点击「查询日志」。")</p>
+}
+else
+{
+    <div class="logs-summary">
+        <span class="badge badge-ok">成功 @Result.NodesSucceeded</span>
+        @if (Result.NodesFailed > 0)
+        {
+            <span class="badge badge-error">失败 @Result.NodesFailed</span>
+        }
+        <span class="muted small">
+            @LogScopes.Text(Result.Scope) · 共 @Result.NodesTotal 个节点 · @Result.TotalEntries 行 · 上限 @Result.Limit 行
+        </span>
+        @if (!string.IsNullOrWhiteSpace(Result.Keyword))
+        {
+            <span class="muted small">关键字「@Result.Keyword」</span>
+        }
+        @if (Result.Container is { Length: > 0 })
+        {
+            <span class="muted small">容器 @Result.Container</span>
+        }
+        @if (Result.Website is { Length: > 0 })
+        {
+            <span class="muted small">网站 @Result.Website（@WebsiteLogText(Result.LogType)）</span>
+        }
+        @if (Result.Scope == LogScope.Panel)
+        {
+            <span class="muted small">@(Result.PanelLog == "login" ? "登录日志" : "操作日志")</span>
+        }
+        <span class="muted small">查询于 @Result.GeneratedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+    </div>
+
+    @if (Result.Nodes.Count == 0)
+    {
+        <div class="card">
+            <p class="muted">没有可查询的启用节点。</p>
+        </div>
+    }
+
+    @foreach (var node in Result.Nodes)
+    {
+        <section class="logs-node">
+            <header class="logs-node-header">
+                <strong>@node.NodeName</strong>
+                <span class="badge @(node.Success ? "badge-ok" : "badge-error")">
+                    @(node.Success ? "成功" : "失败")
+                </span>
+                @if (node.Success)
+                {
+                    <span class="muted small">@node.Entries.Count 行 · 耗时 @FormatElapsed(node.Elapsed)</span>
+                }
+                @if (node.Total is { } total)
+                {
+                    <span class="muted small">匹配 @total 条</span>
+                }
+                @if (node.Truncated)
+                {
+                    <span class="badge badge-warn">已截断</span>
+                }
+                @if (node.HasMore)
+                {
+                    <span class="muted small">还有更多：请缩小时间范围或增加关键字</span>
+                }
+            </header>
+
+            @if (!node.Success)
+            {
+                <div class="alert alert-error">@node.ErrorMessage</div>
+            }
+            else if (node.Entries.Count == 0)
+            {
+                <p class="muted small">（无日志输出）</p>
+            }
+            else
+            {
+                <pre class="logs-output">@BuildText(node.Entries)</pre>
+            }
+        </section>
+    }
+}
+
+@code {
+    [Parameter]
+    public LogQueryResult? Result { get; set; }
+
+    [Parameter]
+    public bool Loading { get; set; }
+
+    [Parameter]
+    public string? Error { get; set; }
+
+    private static string WebsiteLogText(string? logType) =>
+        string.Equals(logType, "error", StringComparison.OrdinalIgnoreCase) ? "错误日志" : "访问日志";
+
+    private static string FormatElapsed(TimeSpan elapsed) =>
+        elapsed.TotalSeconds >= 1
+            ? $"{elapsed.TotalSeconds:0.0}s"
+            : $"{elapsed.TotalMilliseconds:0}ms";
+
+    private static string BuildText(IReadOnlyList<LogEntry> entries)
+    {
+        var builder = new System.Text.StringBuilder();
+        foreach (var entry in entries)
+        {
+            if (builder.Length > 0)
+            {
+                builder.Append('\n');
+            }
+
+            var header = new List<string>(4);
+            if (!string.IsNullOrWhiteSpace(entry.Time))
+            {
+                header.Add(entry.Time.Trim());
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.Level))
+            {
+                header.Add("[" + entry.Level.Trim() + "]");
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.Service))
+            {
+                header.Add("(" + entry.Service.Trim() + ")");
+            }
+
+            if (header.Count > 0)
+            {
+                builder.Append(string.Join(' ', header)).Append(' ');
+            }
+
+            builder.Append(entry.Message);
+            if (!string.IsNullOrWhiteSpace(entry.Detail))
+            {
+                builder.Append("\n    ").Append(entry.Detail);
+            }
+        }
+
+        return builder.ToString();
+    }
+}

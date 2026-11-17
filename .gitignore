@@ -1,0 +1,32 @@
+# Build output
+bin/
+obj/
+publish/
+TestResults/
+*.user
+*.suo
+.vs/
+
+# Local runtime data
+data/
+logs/
+# 源码/测试中的 Logs 目录（Windows 文件系统大小写不敏感，上面的 logs/ 会误伤，需显式排除）
+!**/Logs/
+!**/Logs/**
+secrets/
+*.db
+*.db-shm
+*.db-wal
+appsettings.Local.json
+
+# Tooling / caches
+tools/
+.dotnet/
+.nuget/
+.appdata/
+.localappdata/
+tmp/
+
+# OS
+Thumbs.db
+.DS_Store

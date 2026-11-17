@@ -1,0 +1,65 @@
+.compose-table {
+    font-size: 13px;
+}
+
+.compose-table .col-actions {
+    width: 1%;
+    white-space: nowrap;
+}
+
+.compose-table .compose-row {
+    transition: background var(--dur, 200ms) var(--ease-out, ease);
+}
+
+.compose-table .compose-row:hover {
+    background: var(--panel-hover);
+}
+
+.compose-table .compose-row.is-active {
+    background: var(--primary-soft);
+    box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.compose-table .compose-name {
+    font-weight: 600;
+}
+
+.compose-table .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.compose-table .cell-ellipsis {
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.compose-table .warn-text {
+    color: var(--warn);
+}
+
+.compose-table .row-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+@media (hover: hover) {
+    .compose-table .row-actions {
+        opacity: 0;
+        transition: opacity var(--dur, 200ms) var(--ease-out, ease);
+    }
+
+    .compose-table .compose-row:hover .row-actions,
+    .compose-table .compose-row:focus-within .row-actions {
+        opacity: 1;
+    }
+}
+
+.btn-xs {
+    padding: 2px 6px;
+    font-size: 12px;
+    line-height: 1.4;
+}

@@ -1,0 +1,19 @@
+@* 应用商店两栏骨架：左侧节点/已安装应用树，右侧工作区（商店、已安装、汇总）。 *@
+<div class="appstore-layout">
+    <aside class="appstore-tree-panel" aria-label="节点与应用导航">
+        @Tree
+    </aside>
+    <section class="appstore-main" aria-label="应用商店工作区">
+        @ChildContent
+    </section>
+</div>
+
+@code {
+    /// <summary>左树区域内容（树 + 标题 + 提示）。</summary>
+    [Parameter]
+    public RenderFragment? Tree { get; set; }
+
+    /// <summary>右侧工作区内容。</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

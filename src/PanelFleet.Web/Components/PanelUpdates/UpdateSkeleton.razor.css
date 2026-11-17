@@ -1,0 +1,41 @@
+/* 面板更新：版本检查骨架屏。 */
+
+.update-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px 4px;
+}
+
+.update-skeleton-line {
+    height: 16px;
+    border-radius: var(--radius-sm, 8px);
+    background: var(--panel-hover, rgba(15, 23, 42, 0.08));
+    animation: update-skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.update-skeleton-title {
+    height: 24px;
+    width: 46%;
+}
+
+.update-skeleton-short {
+    width: 38%;
+}
+
+@keyframes update-skeleton-pulse {
+    0%,
+    100% {
+        opacity: 0.55;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .update-skeleton-line {
+        animation: none;
+    }
+}

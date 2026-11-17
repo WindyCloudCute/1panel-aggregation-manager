@@ -1,0 +1,15 @@
+@page "/cronjobs"
+@using PanelFleet.Web.Components.Cronjobs
+@attribute [Authorize]
+
+<PageTitle>计划任务</PageTitle>
+
+<CronjobsView NodeIdQuery="NodeId" CronjobIdQuery="CronjobId" />
+
+@code {
+    [SupplyParameterFromQuery(Name = "nodeId")]
+    public Guid? NodeId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "id")]
+    public long? CronjobId { get; set; }
+}

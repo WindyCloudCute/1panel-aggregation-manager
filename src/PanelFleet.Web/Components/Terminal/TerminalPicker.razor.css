@@ -1,0 +1,230 @@
+/* 终端入口：节点选择 + 容器 exec 列表。 */
+
+.picker-health-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    background: var(--muted, #9ca3af);
+}
+
+.picker-dot-ok {
+    background: var(--ok, #16a34a);
+}
+
+.picker-dot-busy {
+    background: var(--warn, #f59e0b);
+}
+
+.picker-dot-error {
+    background: var(--error, #dc2626);
+}
+
+.picker-dot-idle {
+    background: var(--muted, #9ca3af);
+}
+
+.terminal-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.terminal-picker-toolbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 10px 16px;
+    flex-wrap: wrap;
+}
+
+.terminal-picker-search {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.terminal-picker-search .search-input {
+    min-width: 240px;
+}
+
+.terminal-node {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: var(--radius-lg, 16px);
+    border: 1px solid var(--border, #e5e7eb);
+    transition: border-color var(--dur-fast, 120ms) ease, box-shadow var(--dur-fast, 120ms) ease;
+}
+
+.terminal-node:hover {
+    border-color: var(--primary-soft, rgba(37, 99, 235, 0.45));
+    box-shadow: var(--shadow-sm, 0 2px 8px rgba(15, 23, 42, 0.06));
+}
+
+.terminal-node.is-highlighted {
+    border-color: var(--primary, #2563eb);
+    box-shadow: var(--shadow-md, 0 6px 18px rgba(15, 23, 42, 0.1));
+}
+
+.terminal-node-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.terminal-node-title {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.terminal-node-title strong {
+    font-size: 14px;
+}
+
+.terminal-node-title .muted {
+    word-break: break-all;
+}
+
+.terminal-node-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.terminal-node .btn:active {
+    transform: scale(0.97);
+}
+
+.terminal-container-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border, #e5e7eb);
+}
+
+.terminal-container-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-md, 10px);
+    background: var(--panel, #fff);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--dur-fast, 120ms) ease, border-color var(--dur-fast, 120ms) ease, transform var(--dur-fast, 120ms) ease;
+}
+
+.terminal-container-item:hover {
+    background: var(--panel-hover, rgba(15, 23, 42, 0.04));
+    border-color: var(--primary, #2563eb);
+}
+
+.terminal-container-item:active {
+    transform: scale(0.98);
+}
+
+.terminal-container-name {
+    font-size: 13px;
+    font-weight: 600;
+    word-break: break-all;
+}
+
+.terminal-container-image {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.terminal-container-state {
+    padding: 4px 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.terminal-picker-empty {
+    border-radius: var(--radius-lg, 16px);
+}
+
+.terminal-picker-disabled code {
+    padding: 0 4px;
+    border-radius: var(--radius-sm, 6px);
+    background: var(--panel-hover, rgba(15, 23, 42, 0.08));
+}
+
+/* 加载骨架 */
+.terminal-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.terminal-skeleton-line,
+.terminal-skeleton-card {
+    border-radius: var(--radius-lg, 16px);
+    background: var(--panel-hover, rgba(15, 23, 42, 0.08));
+    animation: terminal-skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.terminal-skeleton-line {
+    height: 18px;
+}
+
+.terminal-skeleton-lg {
+    width: 40%;
+    height: 26px;
+}
+
+.terminal-skeleton-card {
+    height: 76px;
+}
+
+@keyframes terminal-skeleton-pulse {
+    0%,
+    100% {
+        opacity: 0.55;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+@media (max-width: 720px) {
+    .terminal-node-actions {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .terminal-picker-search .search-input {
+        min-width: 0;
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .terminal-node,
+    .terminal-container-item,
+    .terminal-node .btn:active,
+    .terminal-container-item:active {
+        transition: none;
+        transform: none;
+    }
+
+    .terminal-skeleton-line,
+    .terminal-skeleton-card {
+        animation: none;
+    }
+}

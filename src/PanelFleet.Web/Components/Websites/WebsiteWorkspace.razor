@@ -1,0 +1,1757 @@
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.JSInterop
+@using PanelFleet.Application.Models
+@using PanelFleet.Application.Operations
+@using PanelFleet.Application.Websites
+@using PanelFleet.Domain.Model
+@using PanelFleet.Web.Components.Navigation
+@using PanelFleet.Web.Components.Websites
+@inject INodeService NodeService
+@inject WebsiteService WebsiteService
+@inject IWriteOperationService Operations
+@inject IActorProvider ActorProvider
+@inject IJSRuntime JS
+
+@* 网站工作台：左侧节点/分组/网站树，右侧列表与受控操作；建站走单节点向导与操作内核。 *@
+<div class="page-header">
+    <div class="page-header-title">
+        <h1>网站管理</h1>
+        <p class="page-subtitle">按节点浏览网站、查看详情并执行受控操作；新建网站需先选择目标节点。</p>
+    </div>
+    <div class="actions">
+        <button type="button" class="btn btn-tree-toggle" @onclick="OpenTree" aria-label="打开节点树">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 6h16M4 12h10M4 18h7" />
+            </svg>
+            节点树
+        </button>
+        <button type="button" class="btn" @onclick="RefreshAsync" disabled="@(_loading || _busy)">刷新</button>
+        <button type="button" class="btn btn-primary" @onclick="OpenCreateWizardAsync">新建网站</button>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(_nodeError))
+{
+    <div class="alert alert-error" role="alert">节点列表加载失败：@_nodeError</div>
+}
+
+@if (_nodesLoaded && _nodes.Count == 0)
+{
+    <div class="card resource-empty website-empty-page">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="7" rx="2" />
+            <rect x="3" y="13" width="18" height="7" rx="2" />
+            <path d="M7 7.5h.01M7 16.5h.01" />
+        </svg>
+        <h3>还没有节点</h3>
+        <p class="muted">先到 <a href="/nodes/new">添加节点</a> 接入第一台 1Panel，再管理网站。</p>
+    </div>
+}
+else
+{
+    <div class="workbench @(_treeOpen ? "is-tree-open" : null)">
+        <aside class="workbench-tree" aria-label="网站节点树">
+            <div class="workbench-tree-head">
+                <span class="workbench-tree-title">节点与网站</span>
+                <button type="button" class="btn btn-xs workbench-tree-close" @onclick="CloseTree" aria-label="收起节点树">收起</button>
+            </div>
+
+            @if (!_nodesLoaded)
+            {
+                <div class="tree-loading" aria-busy="true">
+                    <span class="skeleton-line w-70"></span>
+                    <span class="skeleton-line w-50"></span>
+                    <span class="skeleton-line w-60"></span>
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(_nodeError))
+            {
+                <div class="tree-error" role="alert">
+                    <p>@_nodeError</p>
+                    <button type="button" class="btn btn-xs" @onclick="() => ReloadNodesAsync()">重试</button>
+                </div>
+            }
+            else if (_enabledNodes.Count == 0)
+            {
+                <p class="tree-empty">暂无已启用节点，请先在「节点管理」中添加并启用节点。</p>
+            }
+            else
+            {
+                <NavTree Nodes="_treeNodes"
+                         SelectedId="@_selectedTreeId"
+                         OnSelect="HandleTreeSelectAsync"
+                         OnToggle="HandleTreeToggleAsync"
+                         SelectableBranches="true"
+                         Searchable="true"
+                         SearchPlaceholder="搜索节点、分组或网站…"
+                         EmptyText="没有匹配的节点或网站"
+                         AriaLabel="网站节点树" />
+            }
+        </aside>
+
+        <div class="workbench-backdrop" @onclick="CloseTree" aria-hidden="true"></div>
+
+        <section class="workbench-main" aria-label="网站列表">
+            <div class="scope-card card">
+                <div class="scope-card-main">
+                    <span class="scope-icon" aria-hidden="true">
+                        @if (_scopeNodeId is null)
+                        {
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="9" />
+                                <path d="M3 12h18M12 3c2.4 2.6 3.6 5.6 3.6 9s-1.2 6.4-3.6 9c-2.4-2.6-3.6-5.6-3.6-9S9.6 5.6 12 3z" />
+                            </svg>
+                        }
+                        else
+                        {
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="4" width="18" height="7" rx="2" />
+                                <rect x="3" y="13" width="18" height="7" rx="2" />
+                                <path d="M7 7.5h.01M7 16.5h.01" />
+                            </svg>
+                        }
+                    </span>
+                    <div class="scope-text">
+                        <div class="scope-title">@ScopeLabel</div>
+                        <div class="scope-hint">@ScopeHint</div>
+                    </div>
+                </div>
+                <div class="scope-actions">
+                    @if (_scopeNodeId is Guid && _scopeGroupId is not null)
+                    {
+                        <button type="button" class="btn btn-xs" @onclick="ClearGroupFilterAsync">该节点全部网站</button>
+                    }
+                    @if (_scopeNodeId is Guid)
+                    {
+                        <button type="button" class="btn btn-xs" @onclick="SelectRootAsync">全部节点</button>
+                    }
+                </div>
+            </div>
+
+            @if (_enabledNodes.Count > 0)
+            {
+                <div class="resource-toolbar website-toolbar card">
+                    <label class="toolbar-field website-search-field">
+                        <span class="toolbar-label">搜索</span>
+                        <span class="search-box">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <circle cx="11" cy="11" r="7" />
+                                <path d="m16.5 16.5 4 4" />
+                            </svg>
+                            <input class="search-input"
+                                   type="search"
+                                   placeholder="域名 / 别名 / 备注…"
+                                   @bind="_searchInput"
+                                   @bind:event="oninput"
+                                   @onkeydown="OnSearchKeyDown" />
+                        </span>
+                    </label>
+                    <div class="toolbar-actions">
+                        <button type="button" class="btn btn-xs" @onclick="ApplySearchAsync" disabled="@_loading">搜索</button>
+                        @if (!string.IsNullOrWhiteSpace(_search))
+                        {
+                            <button type="button" class="btn btn-xs" @onclick="ClearSearchAsync" disabled="@_loading">清空</button>
+                        }
+                    </div>
+                    <div class="toolbar-meta muted small">@CountText</div>
+                </div>
+
+                @if (_view is { Truncated: true })
+                {
+                    <div class="alert alert-warn">网站数量超过展示上限（@WebsiteService.MaxRows 行），部分结果未展示，请使用搜索或分组缩小范围。</div>
+                }
+                @foreach (var warning in _view?.Warnings ?? [])
+                {
+                    <div class="alert alert-warn">@warning</div>
+                }
+
+                @if (_loading)
+                {
+                    <div class="skeleton-table card" aria-busy="true" aria-label="正在加载网站列表">
+                        @for (var i = 0; i < 5; i++)
+                        {
+                            <div class="skeleton-row">
+                                <span class="skeleton-line w-30"></span>
+                                <span class="skeleton-line w-15"></span>
+                                <span class="skeleton-line w-10"></span>
+                                <span class="skeleton-line w-20"></span>
+                            </div>
+                        }
+                    </div>
+                }
+                else if (!string.IsNullOrWhiteSpace(_error))
+                {
+                    <div class="alert alert-error" role="alert">
+                        @_error
+                        <button type="button" class="btn btn-xs" @onclick="RefreshAsync">重试</button>
+                    </div>
+                }
+                else if (_view is null || _view.Rows.Count == 0)
+                {
+                    <div class="card resource-empty website-empty">
+                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M3 12h18M12 3c2.4 2.6 3.6 5.6 3.6 9s-1.2 6.4-3.6 9c-2.4-2.6-3.6-5.6-3.6-9S9.6 5.6 12 3z" />
+                        </svg>
+                        <h3>@EmptyTitle</h3>
+                        <p class="muted">@EmptyDescription</p>
+                    </div>
+                }
+                else
+                {
+                    <WebsiteTable Rows="_view.Rows"
+                                  ShowNode="@(_scopeNodeId is null)"
+                                  HighlightId="@_highlightWebsiteId"
+                                  Busy="_busy"
+                                  OnDetail="OpenRowDetailAsync"
+                                  OnEdit="OpenEditAsync"
+                                  OnToggle="ToggleStartStopAsync" />
+
+                    <div class="resource-pagination">
+                        <button type="button" class="btn" @onclick="PreviousPageAsync" disabled="@(_loading || _view.Page <= 1)">上一页</button>
+                        <span class="muted small">第 @_view.Page / @_view.TotalPages 页</span>
+                        <button type="button" class="btn" @onclick="NextPageAsync" disabled="@(_loading || _view.Page >= _view.TotalPages)">下一页</button>
+                    </div>
+                }
+            }
+        </section>
+    </div>
+
+    @if (_drawerOpen)
+    {
+        <WebsiteDetailDrawer Detail="_detail"
+                             NodeName="_drawerRow?.NodeName ?? string.Empty"
+                             Domains="_domains"
+                             Proxies="_proxies"
+                             Https="_https"
+                             Runtimes="_runtimes"
+                             Certificates="_certificates"
+                             Busy="_busy"
+                             Loading="_drawerLoading"
+                             Error="@_drawerError"
+                             PanelUrl="@DetailPanelUrl"
+                             OnClose="CloseDrawer"
+                             OnRefresh="RefreshDetailAsync"
+                             OnEdit="OpenEditDialogAsync"
+                             OnDomainCreate="OpenDomainDialog"
+                             OnDomainPrimary="SetPrimaryDomainAsync"
+                             OnDomainSslToggle="ToggleDomainSslAsync"
+                             OnDomainDelete="DeleteDomainAsync"
+                             OnProxyCreate="OpenProxyCreateDialog"
+                             OnProxyEdit="OpenProxyEditDialog"
+                             OnProxyStatusToggle="ToggleProxyStatusAsync"
+                             OnProxyDelete="DeleteProxyAsync"
+                             OnSslDeploy="OpenSslDeployDialog"
+                             OnSslRequest="OpenSslRequestDialog"
+                             OnSslDisable="DisableHttpsAsync"
+                             OnSslApply="ApplySslAsync"
+                             OnPhpChange="ChangePhpAsync" />
+    }
+
+    @if (_editDetail is not null)
+    {
+        <WebsiteEditDialog Detail="_editDetail"
+                           Groups="_groups"
+                           Busy="_busy"
+                           OnSubmit="SubmitEditAsync"
+                           OnCancel="CloseEditDialog" />
+    }
+
+    @if (_domainTarget is not null)
+    {
+        <DomainFormDialog WebsiteId="_domainTarget.Id"
+                          WebsiteDomain="@_domainTarget.PrimaryDomain"
+                          Busy="_busy"
+                          OnSubmit="SubmitDomainAsync"
+                          OnCancel="CloseDomainDialog" />
+    }
+
+    @if (_proxyTarget is not null)
+    {
+        <ProxyFormDialog WebsiteId="_proxyTarget.Id"
+                         Existing="_proxyEditing"
+                         Busy="_busy"
+                         OnSubmit="SubmitProxyAsync"
+                         OnCancel="CloseProxyDialog" />
+    }
+
+    @if (_sslTarget is not null)
+    {
+        <SslDeployDialog WebsiteId="_sslTarget.Id"
+                         WebsiteDomain="@_sslTarget.PrimaryDomain"
+                         Certificates="_certificates"
+                         CurrentHttps="_https"
+                         Busy="_busy"
+                         OnSubmit="SubmitSslDeployAsync"
+                         OnCancel="CloseSslDialog" />
+    }
+
+    @if (_createWizardOpen)
+    {
+        <WebsiteCreateWizard Nodes="_nodes"
+                             Groups="_groups"
+                             LockedNodeId="_scopeNodeId"
+                             Busy="_busy"
+                             OnSubmit="SubmitCreateWizardAsync"
+                             OnCancel="CloseCreateWizard" />
+    }
+
+    @if (_sslRequestOpen && _detail is not null)
+    {
+        <SslRequestDialog NodeId="_detail.NodeId"
+                          PrimaryDomain="@_detail.PrimaryDomain"
+                          Busy="_busy"
+                          OnSubmit="SubmitSslRequestAsync"
+                          OnCancel="CloseSslRequestDialog" />
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_operationError))
+    {
+        <div class="alert alert-error" role="alert">@_operationError</div>
+    }
+
+    @if (_execution is not null)
+    {
+        <div class="operation-panel card">
+            <div class="section-head">
+                <h2>执行结果</h2>
+                <button type="button" class="btn" @onclick="CloseResult">关闭</button>
+            </div>
+            <OperationResultView Execution="_execution" />
+            <p class="muted small">完整执行记录可在 <a href="/audit">审计</a> 页面查看（operation.executed / operation.batch）。</p>
+        </div>
+    }
+
+    <OperationConfirmDialog Preview="_preview" Busy="_busy" OnConfirm="ExecuteAsync" OnCancel="CancelPreviewAsync" />
+}
+
+@code {
+    private const int PageSize = 20;
+    private const int TreeFetchPageSize = 200;
+    private const string PreferenceKey = "pf.tree.websites";
+    private const string RootId = "root";
+
+    private static readonly JsonSerializerOptions PreferenceJsonOptions = new(JsonSerializerDefaults.Web);
+
+    [Parameter]
+    public Guid? NodeIdQuery { get; set; }
+
+    [Parameter]
+    public long? WebsiteIdQuery { get; set; }
+
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private IReadOnlyList<NodeSummary> _enabledNodes = [];
+    private bool _nodesLoaded;
+    private string? _nodeError;
+    private ActorInfo? _actor;
+
+    private IReadOnlyList<NavTreeNode> _treeNodes = [];
+    private string? _selectedTreeId = RootId;
+    private Guid? _scopeNodeId;
+    private long? _scopeGroupId;
+    private bool _ungroupedOnly;
+    private long? _highlightWebsiteId;
+    private bool _treeOpen;
+    private bool _preferencesApplied;
+    private bool _initialScopeApplied;
+
+    private IReadOnlyList<WebsiteGroupInfo> _groups = [];
+    private string? _searchInput;
+    private string? _search;
+    private int _page = 1;
+    private WebsiteView? _view;
+    private bool _loading;
+    private string? _error;
+
+    private bool _drawerOpen;
+    private Guid _drawerNodeId;
+    private long _detailWebsiteId;
+    private WebsiteRow? _drawerRow;
+    private WebsiteDetail? _detail;
+    private IReadOnlyList<WebsiteDomain> _domains = [];
+    private IReadOnlyList<WebsiteProxy> _proxies = [];
+    private WebsiteHttpsConfig? _https;
+    private IReadOnlyList<WebsiteRuntime> _runtimes = [];
+    private IReadOnlyList<WebsiteSsl> _certificates = [];
+    private bool _drawerLoading;
+    private string? _drawerError;
+
+    private WebsiteDetail? _editDetail;
+    private WebsiteRow? _domainTarget;
+    private WebsiteRow? _proxyTarget;
+    private WebsiteProxy? _proxyEditing;
+    private WebsiteDetail? _sslTarget;
+    private bool _createWizardOpen;
+    private bool _sslRequestOpen;
+
+    private OperationPreview? _preview;
+    private OperationExecution? _execution;
+    private bool _busy;
+    private string? _operationError;
+
+    private string ScopeLabel => _scopeNodeId switch
+    {
+        null => "全部节点",
+        _ when _scopeGroupId is not null => $"{ScopeNodeName} / {ScopeGroupName}",
+        _ => ScopeNodeName
+    };
+
+    private string ScopeHint
+    {
+        get
+        {
+            if (_scopeNodeId is null)
+            {
+                return "聚合视图只读：汇总所有已启用节点的网站，可查看详情；启停等操作按网站所属节点执行。";
+            }
+
+            if (_scopeGroupId is not null)
+            {
+                return "当前按分组过滤，可切回该节点全部网站。";
+            }
+
+            if (_ungroupedOnly)
+            {
+                return "仅显示未归入任何分组的网站。";
+            }
+
+            return "当前节点上下文：操作将提交到该节点的写操作内核并记录审计。";
+        }
+    }
+
+    private string ScopeNodeName => _nodes.FirstOrDefault(node => node.Id.Value == _scopeNodeId)?.Name
+        ?? _scopeNodeId?.ToString()
+        ?? string.Empty;
+
+    private string ScopeGroupName => _groups.FirstOrDefault(group => group.Id == _scopeGroupId)?.Name
+        ?? (string.IsNullOrWhiteSpace(_search) ? "分组" : "搜索结果");
+
+    private string CountText => _view is null
+        ? "—"
+        : $"共 {_view.TotalMatched} 个网站 · 第 {_view.Page}/{_view.TotalPages} 页";
+
+    private string EmptyTitle => _scopeNodeId is null
+        ? "所有节点暂无网站"
+        : !string.IsNullOrWhiteSpace(_search) ? "没有匹配的网站" : "该节点暂无网站";
+
+    private string EmptyDescription => _scopeNodeId is null
+        ? "可以在节点对应的 1Panel 面板中创建网站，或检查节点是否已启用。"
+        : "该节点还没有网站；可以点击右上角「新建网站」按向导创建，或到 1Panel 面板中操作后刷新。";
+
+    private string? DetailPanelUrl
+    {
+        get
+        {
+            if (_detail is null)
+            {
+                return null;
+            }
+
+            var node = _nodes.FirstOrDefault(item => item.Id.Value == _detail.NodeId);
+            if (node is null)
+            {
+                return null;
+            }
+
+            var baseUrl = node.BaseUrl.AbsoluteUri.TrimEnd('/');
+            var entrance = string.IsNullOrWhiteSpace(node.SecurityEntrance)
+                ? string.Empty
+                : "/" + node.SecurityEntrance.Trim('/');
+            return $"{baseUrl}{entrance}/websites";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _actor = await ActorProvider.GetAsync();
+        await ReloadNodesAsync(initial: true);
+
+        // 深链 /websites?nodeId=... 在预渲染阶段就加载数据，保证首屏 SSR 即有列表，
+        // 而不是等 OnAfterRenderAsync 交互后才有内容。
+        if (NodeIdQuery is Guid queryNode && IsEnabledNode(queryNode))
+        {
+            _scopeNodeId = queryNode;
+            _scopeGroupId = null;
+            _ungroupedOnly = false;
+            _selectedTreeId = NodeTreeId(queryNode);
+            _initialScopeApplied = true;
+            if (WebsiteIdQuery is long websiteId)
+            {
+                _highlightWebsiteId = websiteId;
+            }
+            await LoadAsync();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _preferencesApplied || !_nodesLoaded || _enabledNodes.Count == 0)
+        {
+            return;
+        }
+
+        _preferencesApplied = true;
+
+        if (_initialScopeApplied)
+        {
+            if (WebsiteIdQuery is long deepWebsiteId && _scopeNodeId is Guid deepNodeId)
+            {
+                _highlightWebsiteId = deepWebsiteId;
+                await OpenDetailAsync(deepNodeId, deepWebsiteId);
+            }
+            await SavePreferenceAsync();
+            return;
+        }
+
+        if (WebsiteIdQuery is long websiteId && NodeIdQuery is Guid nodeId && IsEnabledNode(nodeId))
+        {
+            _scopeNodeId = nodeId;
+            _scopeGroupId = null;
+            _ungroupedOnly = false;
+            _selectedTreeId = NodeTreeId(nodeId);
+            _highlightWebsiteId = websiteId;
+            await LoadAsync();
+            await OpenDetailAsync(nodeId, websiteId);
+            return;
+        }
+
+        if (NodeIdQuery is Guid queryNode && IsEnabledNode(queryNode))
+        {
+            _scopeNodeId = queryNode;
+            _scopeGroupId = null;
+            _ungroupedOnly = false;
+            _selectedTreeId = NodeTreeId(queryNode);
+            await LoadAsync();
+            await SavePreferenceAsync();
+            return;
+        }
+
+        var preference = await ReadPreferenceAsync();
+        if (preference is not null && preference != RootId && IsValidTreeId(preference))
+        {
+            _selectedTreeId = preference;
+            if (TryParseNodeId(preference, out var preferredNode) && IsEnabledNode(preferredNode))
+            {
+                _scopeNodeId = preferredNode;
+                _scopeGroupId = null;
+                _ungroupedOnly = false;
+                await LoadAsync();
+            }
+        }
+
+        await SavePreferenceAsync();
+    }
+
+    private async Task ReloadNodesAsync(bool initial = false)
+    {
+        _nodesLoaded = false;
+        _nodeError = null;
+        try
+        {
+            _nodes = await NodeService.ListAsync(default);
+            _enabledNodes = _nodes.Where(node => node.IsEnabled).ToArray();
+        }
+        catch (Exception exception)
+        {
+            _nodes = [];
+            _enabledNodes = [];
+            _nodeError = exception.Message;
+        }
+        finally
+        {
+            _nodesLoaded = true;
+        }
+
+        BuildTree();
+        if (!initial)
+        {
+            await LoadAsync();
+        }
+    }
+
+    private void BuildTree()
+    {
+        var nodeChildren = new List<NavTreeNode>();
+        foreach (var node in _nodes)
+        {
+            var enabled = node.IsEnabled;
+            nodeChildren.Add(new NavTreeNode
+            {
+                Id = NodeTreeId(node.Id.Value),
+                Label = node.Name,
+                Hint = enabled ? node.BaseUrl.AbsoluteUri : "已禁用，不参与查询",
+                BadgeText = enabled ? "在线" : "禁用",
+                BadgeClass = enabled ? "badge-ok" : "badge-unknown",
+                Kind = NavTreeNodeKind.Branch,
+                IsDisabled = !enabled,
+                ChildrenLoaded = !enabled,
+                DefaultExpanded = enabled && node.Id.Value == _scopeNodeId,
+                Children = enabled ? [] : [new NavTreeNode
+                {
+                    Id = $"disabled:{node.Id.Value:N}",
+                    Label = "节点已禁用",
+                    Kind = NavTreeNodeKind.Leaf,
+                    IsDisabled = true
+                }]
+            });
+        }
+
+        _treeNodes =
+        [
+            new NavTreeNode
+            {
+                Id = RootId,
+                Label = "全部节点",
+                Hint = $"{_enabledNodes.Count} 个已启用节点",
+                BadgeText = _enabledNodes.Count.ToString(),
+                BadgeClass = "badge-unknown",
+                Kind = NavTreeNodeKind.Branch,
+                DefaultExpanded = true,
+                ChildrenLoaded = true,
+                Children = nodeChildren
+            }
+        ];
+    }
+
+    private async Task HandleTreeSelectAsync(NavTreeNode node)
+    {
+        _treeOpen = false;
+
+        if (node.IsDisabled)
+        {
+            return;
+        }
+
+        if (node.Id == RootId)
+        {
+            await SelectRootAsync();
+            return;
+        }
+
+        if (TryParseNodeId(node.Id, out var nodeId))
+        {
+            if (!IsEnabledNode(nodeId))
+            {
+                return;
+            }
+
+            _scopeNodeId = nodeId;
+            _scopeGroupId = null;
+            _ungroupedOnly = false;
+            _selectedTreeId = node.Id;
+            _highlightWebsiteId = null;
+            _page = 1;
+            await LoadAsync();
+            await SavePreferenceAsync();
+            await UpdateUrlAsync(nodeId, null);
+            return;
+        }
+
+        if (TryParseGroupId(node.Id, out var groupNodeId, out var groupId))
+        {
+            if (!IsEnabledNode(groupNodeId))
+            {
+                return;
+            }
+
+            _scopeNodeId = groupNodeId;
+            _scopeGroupId = groupId;
+            _ungroupedOnly = false;
+            _selectedTreeId = node.Id;
+            _highlightWebsiteId = null;
+            _page = 1;
+            await LoadAsync();
+            await SavePreferenceAsync();
+            await UpdateUrlAsync(groupNodeId, null);
+            return;
+        }
+
+        if (TryParseSiteId(node.Id, out var siteNodeId, out var websiteId))
+        {
+            if (!IsEnabledNode(siteNodeId))
+            {
+                return;
+            }
+
+            _scopeNodeId = siteNodeId;
+            _scopeGroupId = null;
+            _ungroupedOnly = false;
+            _selectedTreeId = node.Id;
+            _highlightWebsiteId = websiteId;
+            _page = 1;
+            await LoadAsync();
+            await SavePreferenceAsync();
+            await UpdateUrlAsync(siteNodeId, websiteId);
+            await OpenDetailAsync(siteNodeId, websiteId);
+        }
+    }
+
+    private async Task HandleTreeToggleAsync(NavTreeNode node)
+    {
+        if (!TryParseNodeId(node.Id, out var nodeId) || !IsEnabledNode(nodeId))
+        {
+            return;
+        }
+
+        await LoadNodeChildrenAsync(nodeId);
+    }
+
+    private async Task LoadNodeChildrenAsync(Guid nodeId)
+    {
+        var treeId = NodeTreeId(nodeId);
+        UpdateTreeNode(treeId, current => current with { IsLoading = true, Error = null });
+        try
+        {
+            var result = await WebsiteService.ListAsync(new WebsiteQuery(nodeId, null, null, 1, TreeFetchPageSize), default);
+            var children = new List<NavTreeNode>();
+            var groups = result.Groups;
+            foreach (var group in groups)
+            {
+                var sites = result.Rows
+                    .Where(row => row.GroupId == group.Id)
+                    .Select(row => SiteNode(nodeId, row))
+                    .ToList();
+                children.Add(new NavTreeNode
+                {
+                    Id = GroupTreeId(nodeId, group.Id),
+                    Label = group.Name,
+                    Hint = $"{sites.Count} 个网站",
+                    BadgeText = sites.Count.ToString(),
+                    BadgeClass = "badge-unknown",
+                    Kind = NavTreeNodeKind.Branch,
+                    ChildrenLoaded = true,
+                    Children = sites
+                });
+            }
+
+            var ungrouped = result.Rows
+                .Where(row => groups.All(group => group.Id != row.GroupId))
+                .Select(row => SiteNode(nodeId, row))
+                .ToList();
+            if (ungrouped.Count > 0)
+            {
+                children.Add(new NavTreeNode
+                {
+                    Id = GroupTreeId(nodeId, 0),
+                    Label = "未分组",
+                    Hint = $"{ungrouped.Count} 个网站",
+                    BadgeText = ungrouped.Count.ToString(),
+                    BadgeClass = "badge-unknown",
+                    Kind = NavTreeNodeKind.Branch,
+                    ChildrenLoaded = true,
+                    Children = ungrouped
+                });
+            }
+
+            if (result.Truncated || result.TotalMatched > result.Rows.Count)
+            {
+                children.Add(new NavTreeNode
+                {
+                    Id = $"more:{nodeId:N}",
+                    Label = $"仅显示前 {result.Rows.Count} 个网站",
+                    Hint = "使用搜索缩小范围",
+                    Kind = NavTreeNodeKind.Leaf,
+                    IsDisabled = true
+                });
+            }
+
+            UpdateTreeNode(treeId, current => current with
+            {
+                Children = children,
+                ChildrenLoaded = true,
+                IsLoading = false,
+                Error = null
+            });
+        }
+        catch (Exception exception)
+        {
+            UpdateTreeNode(treeId, current => current with
+            {
+                IsLoading = false,
+                ChildrenLoaded = false,
+                Error = "加载失败：" + exception.Message
+            });
+        }
+    }
+
+    private static NavTreeNode SiteNode(Guid nodeId, WebsiteRow row) => new()
+    {
+        Id = SiteTreeId(nodeId, row.Id),
+        Label = row.PrimaryDomain,
+        Hint = row.Status,
+        BadgeText = row.Status,
+        BadgeClass = StatusBadgeClass(row.Status),
+        Kind = NavTreeNodeKind.Leaf
+    };
+
+    private async Task SelectRootAsync()
+    {
+        _scopeNodeId = null;
+        _scopeGroupId = null;
+        _ungroupedOnly = false;
+        _selectedTreeId = RootId;
+        _highlightWebsiteId = null;
+        _page = 1;
+        _treeOpen = false;
+        await LoadAsync();
+        await SavePreferenceAsync();
+        await UpdateUrlAsync(null, null);
+    }
+
+    private async Task ClearGroupFilterAsync()
+    {
+        var nodeId = _scopeNodeId;
+        _scopeGroupId = null;
+        _ungroupedOnly = false;
+        _page = 1;
+        if (nodeId is Guid id)
+        {
+            _selectedTreeId = NodeTreeId(id);
+            await LoadAsync();
+            await SavePreferenceAsync();
+            await UpdateUrlAsync(id, null);
+        }
+    }
+
+    private void UpdateTreeNode(string id, Func<NavTreeNode, NavTreeNode> update)
+    {
+        _treeNodes = UpdateNodes(_treeNodes, id, update);
+    }
+
+    private static IReadOnlyList<NavTreeNode> UpdateNodes(
+        IReadOnlyList<NavTreeNode> nodes,
+        string id,
+        Func<NavTreeNode, NavTreeNode> update)
+    {
+        var changed = false;
+        var result = new List<NavTreeNode>(nodes.Count);
+        foreach (var node in nodes)
+        {
+            if (node.Id == id)
+            {
+                result.Add(update(node));
+                changed = true;
+                continue;
+            }
+
+            if (node.Children.Count > 0)
+            {
+                var children = UpdateNodes(node.Children, id, update);
+                if (!ReferenceEquals(children, node.Children))
+                {
+                    result.Add(node with { Children = children });
+                    changed = true;
+                    continue;
+                }
+            }
+
+            result.Add(node);
+        }
+
+        return changed ? result : nodes;
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            if (_scopeNodeId is Guid nodeId)
+            {
+                await LoadNodeScopeAsync(nodeId);
+            }
+            else
+            {
+                await LoadAggregateAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _view = null;
+            _error = "加载网站列表失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadNodeScopeAsync(Guid nodeId)
+    {
+        if (_ungroupedOnly)
+        {
+            var fetch = await WebsiteService.ListAsync(new WebsiteQuery(nodeId, null, _search, 1, TreeFetchPageSize), default);
+            var rows = fetch.Rows
+                .Where(row => fetch.Groups.All(group => group.Id != row.GroupId))
+                .ToList();
+            var totalPages = Math.Max(1, (int)Math.Ceiling(rows.Count / (double)PageSize));
+            var page = Math.Clamp(_page, 1, totalPages);
+            _view = new WebsiteView(
+                rows.Skip((page - 1) * PageSize).Take(PageSize).ToArray(),
+                rows.Count,
+                page,
+                PageSize,
+                totalPages,
+                fetch.Groups,
+                false,
+                fetch.Warnings,
+                fetch.GeneratedAt);
+            _groups = fetch.Groups;
+            _page = page;
+            return;
+        }
+
+        var result = await WebsiteService.ListAsync(
+            new WebsiteQuery(nodeId, _scopeGroupId, _search, _page, PageSize),
+            default);
+        _view = new WebsiteView(
+            result.Rows,
+            result.TotalMatched,
+            result.Page,
+            result.PageSize,
+            result.TotalPages,
+            result.Groups,
+            result.Truncated,
+            result.Warnings,
+            result.GeneratedAt);
+        _groups = result.Groups;
+        _page = result.Page;
+    }
+
+    private async Task LoadAggregateAsync()
+    {
+        if (_enabledNodes.Count == 0)
+        {
+            _view = null;
+            return;
+        }
+
+        var loads = _enabledNodes.Select(async node =>
+        {
+            try
+            {
+                var result = await WebsiteService.ListAsync(new WebsiteQuery(node.Id.Value, null, _search, 1, TreeFetchPageSize), default);
+                return new NodeLoad(node, result, null);
+            }
+            catch (Exception exception)
+            {
+                return new NodeLoad(node, null, exception.Message);
+            }
+        });
+
+        var results = await Task.WhenAll(loads);
+        var rows = new List<WebsiteRow>();
+        var warnings = new List<string>();
+        var truncated = false;
+        var groups = new List<WebsiteGroupInfo>();
+        foreach (var load in results)
+        {
+            if (load.Result is null)
+            {
+                warnings.Add($"节点 {load.Node.Name} 读取失败：{load.Error}");
+                continue;
+            }
+
+            rows.AddRange(load.Result.Rows);
+            truncated |= load.Result.Truncated || load.Result.TotalMatched > load.Result.Rows.Count;
+            groups.AddRange(load.Result.Groups);
+            foreach (var warning in load.Result.Warnings)
+            {
+                warnings.Add($"{load.Node.Name}：{warning}");
+            }
+        }
+
+        IEnumerable<WebsiteRow> filtered = rows;
+        if (!string.IsNullOrWhiteSpace(_search))
+        {
+            filtered = filtered.Where(row => Contains(row.PrimaryDomain)
+                || Contains(row.Alias)
+                || Contains(row.Remark));
+        }
+
+        var ordered = filtered
+            .OrderByDescending(row => row.Favorite)
+            .ThenBy(row => row.PrimaryDomain, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var totalPages = Math.Max(1, (int)Math.Ceiling(ordered.Count / (double)PageSize));
+        var page = Math.Clamp(_page, 1, totalPages);
+        _view = new WebsiteView(
+            ordered.Skip((page - 1) * PageSize).Take(PageSize).ToArray(),
+            ordered.Count,
+            page,
+            PageSize,
+            totalPages,
+            groups.DistinctBy(group => (group.Id, group.Name)).ToArray(),
+            truncated || ordered.Count > WebsiteService.MaxRows,
+            warnings.Distinct(StringComparer.Ordinal).ToArray(),
+            DateTimeOffset.UtcNow);
+        _page = page;
+
+        bool Contains(string? value) => !string.IsNullOrWhiteSpace(value)
+            && value.Contains(_search!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task RefreshAsync()
+    {
+        _operationError = null;
+        await LoadAsync();
+        if (_drawerOpen)
+        {
+            await RefreshDetailAsync();
+        }
+    }
+
+    private async Task OpenRowDetailAsync(WebsiteRow row)
+    {
+        await OpenDetailAsync(row.NodeId, row.Id);
+    }
+
+    private async Task OpenDetailAsync(Guid nodeId, long websiteId)
+    {
+        _drawerNodeId = nodeId;
+        _detailWebsiteId = websiteId;
+        _drawerOpen = true;
+        _detail = null;
+        _drawerRow = null;
+        _domains = [];
+        _proxies = [];
+        _https = null;
+        _runtimes = [];
+        _certificates = [];
+        _highlightWebsiteId = websiteId;
+        await LoadDetailPartsAsync(nodeId, websiteId);
+    }
+
+    private async Task RefreshDetailAsync()
+    {
+        if (!_drawerOpen)
+        {
+            return;
+        }
+
+        await LoadDetailPartsAsync(_drawerNodeId, _detailWebsiteId);
+    }
+
+    private async Task LoadDetailPartsAsync(Guid nodeId, long websiteId)
+    {
+        _drawerLoading = true;
+        _drawerError = null;
+        try
+        {
+            _detail = await WebsiteService.GetDetailAsync(nodeId, websiteId, default);
+            _drawerRow = ToRow(_detail);
+            _domains = await WebsiteService.GetDomainsAsync(nodeId, websiteId, default);
+            _proxies = await WebsiteService.GetProxiesAsync(nodeId, websiteId, default);
+            _https = await WebsiteService.GetHttpsAsync(nodeId, websiteId, default);
+            _certificates = await WebsiteService.GetSslCertificatesAsync(nodeId, default);
+            _runtimes = string.Equals(_detail.RuntimeType, "php", StringComparison.OrdinalIgnoreCase)
+                || (_detail.RuntimeId > 0 && string.Equals(_detail.Type, "runtime", StringComparison.OrdinalIgnoreCase))
+                ? await WebsiteService.GetPhpRuntimesAsync(nodeId, default)
+                : [];
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _drawerError = "加载网站详情失败：" + exception.Message;
+        }
+        finally
+        {
+            _drawerLoading = false;
+        }
+    }
+
+    private static WebsiteRow ToRow(WebsiteDetail detail) => new(
+        detail.NodeId,
+        detail.NodeName,
+        detail.Id,
+        detail.PrimaryDomain,
+        detail.Alias,
+        detail.Type,
+        detail.Status,
+        detail.Protocol,
+        detail.Remark,
+        detail.ExpireDate,
+        detail.SitePath,
+        detail.AppName,
+        detail.RuntimeName,
+        detail.RuntimeType,
+        null,
+        null,
+        detail.Favorite,
+        detail.GroupId,
+        detail.GroupName,
+        detail.ChildSites,
+        detail.ParentSite);
+
+    private void CloseDrawer()
+    {
+        _drawerOpen = false;
+        _detail = null;
+        _drawerRow = null;
+        _domains = [];
+        _proxies = [];
+        _https = null;
+        _runtimes = [];
+        _certificates = [];
+    }
+
+    private async Task OpenEditAsync(WebsiteRow row)
+    {
+        if (_detail?.Id != row.Id || _detail.NodeId != row.NodeId)
+        {
+            await LoadDetailPartsAsync(row.NodeId, row.Id);
+        }
+
+        if (_detail is not null)
+        {
+            await OpenEditDialogAsync(_detail);
+        }
+    }
+
+    private async Task OpenEditDialogAsync(WebsiteDetail detail)
+    {
+        if (_groups.Count == 0)
+        {
+            try
+            {
+                _groups = await WebsiteService.GetGroupsAsync(detail.NodeId, default);
+            }
+            catch (Exception)
+            {
+                // 分组读取失败不阻塞编辑（分组保持 0/未分组）。
+            }
+        }
+
+        _editDetail = detail;
+    }
+
+    private void CloseEditDialog() => _editDetail = null;
+
+    private async Task SubmitEditAsync(WebsiteEditResult result)
+    {
+        var parameters = new JsonObject
+        {
+            ["websiteId"] = result.WebsiteId,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["primaryDomain"] = result.PrimaryDomain,
+            ["remark"] = result.Remark,
+            ["webSiteGroupId"] = result.GroupId,
+            ["expireDate"] = result.ExpireDate,
+            ["favorite"] = result.Favorite,
+            ["IPV6"] = result.IpV6
+        };
+
+        await PreviewAsync("website.update", parameters, _detail?.NodeId ?? _drawerNodeId);
+        if (_preview is not null)
+        {
+            _editDetail = null;
+        }
+    }
+
+    private void OpenDomainDialog()
+    {
+        if (_drawerRow is not null)
+        {
+            _domainTarget = _drawerRow;
+        }
+    }
+
+    private void CloseDomainDialog() => _domainTarget = null;
+
+    private async Task SubmitDomainAsync(DomainCreateResult result)
+    {
+        var parameters = new JsonObject
+        {
+            ["websiteId"] = result.WebsiteId,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["domain"] = result.Domain,
+            ["port"] = result.Port,
+            ["ssl"] = result.Ssl
+        };
+
+        await PreviewAsync("domain.create", parameters, _detail?.NodeId ?? _drawerNodeId);
+        if (_preview is not null)
+        {
+            _domainTarget = null;
+        }
+    }
+
+    private Task ToggleDomainSslAsync(WebsiteDomain domain) => PreviewAsync(
+        "domain.update",
+        new JsonObject
+        {
+            ["websiteId"] = _detail?.Id ?? 0,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["domainId"] = domain.Id,
+            ["domain"] = domain.Domain,
+            ["ssl"] = !domain.Ssl
+        },
+        _detail?.NodeId ?? _drawerNodeId);
+
+    private Task DeleteDomainAsync(WebsiteDomain domain) => PreviewAsync(
+        "domain.delete",
+        new JsonObject
+        {
+            ["websiteId"] = _detail?.Id ?? 0,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["domainId"] = domain.Id,
+            ["domain"] = domain.Domain
+        },
+        _detail?.NodeId ?? _drawerNodeId);
+
+    private void OpenProxyCreateDialog()
+    {
+        if (_drawerRow is not null)
+        {
+            _proxyTarget = _drawerRow;
+            _proxyEditing = null;
+        }
+    }
+
+    private void OpenProxyEditDialog(WebsiteProxy proxy)
+    {
+        if (_drawerRow is not null)
+        {
+            _proxyTarget = _drawerRow;
+            _proxyEditing = proxy;
+        }
+    }
+
+    private void CloseProxyDialog()
+    {
+        _proxyTarget = null;
+        _proxyEditing = null;
+    }
+
+    private async Task SubmitProxyAsync(ProxyEditResult result)
+    {
+        var parameters = new JsonObject
+        {
+            ["websiteId"] = result.WebsiteId,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["proxyName"] = result.ProxyName,
+            ["match"] = result.Match,
+            ["proxyPass"] = result.ProxyPass,
+            ["proxyHost"] = result.ProxyHost,
+            ["enable"] = result.Enable,
+            ["cache"] = result.Cache,
+            ["cacheTime"] = result.CacheTime,
+            ["cacheUnit"] = result.CacheUnit,
+            ["serverCacheTime"] = result.ServerCacheTime,
+            ["serverCacheUnit"] = result.ServerCacheUnit,
+            ["sni"] = result.Sni,
+            ["sslVerify"] = result.SslVerify,
+            ["cors"] = result.Cors,
+            ["allowOrigins"] = result.AllowOrigins,
+            ["allowMethods"] = result.AllowMethods,
+            ["allowHeaders"] = result.AllowHeaders,
+            ["allowCredentials"] = result.AllowCredentials,
+            ["preflight"] = result.Preflight
+        };
+
+        if (!string.IsNullOrWhiteSpace(result.ProxySslName))
+        {
+            parameters["proxySSLName"] = result.ProxySslName;
+        }
+
+        await PreviewAsync(
+            result.Operate == "create" ? "proxy.create" : "proxy.update",
+            parameters,
+            _detail?.NodeId ?? _drawerNodeId);
+        if (_preview is not null)
+        {
+            _proxyTarget = null;
+            _proxyEditing = null;
+        }
+    }
+
+    private Task ToggleProxyStatusAsync(WebsiteProxy proxy) => PreviewAsync(
+        "proxy.status",
+        new JsonObject
+        {
+            ["websiteId"] = _detail?.Id ?? 0,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["proxyName"] = proxy.Name,
+            ["status"] = proxy.Enable ? "disable" : "enable"
+        },
+        _detail?.NodeId ?? _drawerNodeId);
+
+    private Task DeleteProxyAsync(WebsiteProxy proxy) => PreviewAsync(
+        "proxy.delete",
+        new JsonObject
+        {
+            ["websiteId"] = _detail?.Id ?? 0,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["proxyName"] = proxy.Name
+        },
+        _detail?.NodeId ?? _drawerNodeId);
+
+    private async Task OpenSslDeployDialog()
+    {
+        if (_detail is null)
+        {
+            return;
+        }
+
+        if (_certificates.Count == 0)
+        {
+            try
+            {
+                _certificates = await WebsiteService.GetSslCertificatesAsync(_detail.NodeId, default);
+            }
+            catch (Exception exception)
+            {
+                _operationError = "加载 SSL 证书失败：" + exception.Message;
+                return;
+            }
+        }
+
+        _sslTarget = _detail;
+    }
+
+    private void CloseSslDialog() => _sslTarget = null;
+
+    private async Task SubmitSslDeployAsync(SslDeployResult result)
+    {
+        var parameters = new JsonObject
+        {
+            ["websiteId"] = result.WebsiteId,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["sslId"] = result.SslId,
+            ["httpConfig"] = result.HttpConfig
+        };
+
+        await PreviewAsync("ssl.deploy", parameters, _detail?.NodeId ?? _drawerNodeId);
+        if (_preview is not null)
+        {
+            _sslTarget = null;
+        }
+    }
+
+    private Task ApplySslAsync(WebsiteSsl certificate) => PreviewAsync(
+        "ssl.apply",
+        new JsonObject
+        {
+            ["sslId"] = certificate.Id,
+            ["primaryDomain"] = certificate.PrimaryDomain
+        },
+        _detail?.NodeId ?? _drawerNodeId);
+
+    private Task ChangePhpAsync(int runtimeId) => PreviewAsync(
+        "website.php_version",
+        new JsonObject
+        {
+            ["websiteId"] = _detail?.Id ?? 0,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["runtimeId"] = runtimeId
+        },
+        _detail?.NodeId ?? _drawerNodeId);
+
+    private Task ToggleStartStopAsync(WebsiteRow row) => PreviewAsync(
+        string.Equals(row.Status, "Running", StringComparison.OrdinalIgnoreCase) ? "website.stop" : "website.start",
+        new JsonObject
+        {
+            ["websiteId"] = row.Id,
+            ["name"] = row.PrimaryDomain
+        },
+        row.NodeId);
+
+    private async Task PreviewAsync(string kind, JsonObject parameters, Guid nodeId)
+    {
+        _busy = true;
+        _operationError = null;
+        _execution = null;
+        _preview = null;
+        try
+        {
+            _preview = await Operations.PreviewAsync(
+                new OperationInvocation(kind, [new NodeId(nodeId)], parameters),
+                _actor ?? ActorInfo.System,
+                default);
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationNotSupportedException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "预览失败：" + exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ExecuteAsync(string? typedConfirmation)
+    {
+        if (_preview is not { } preview)
+        {
+            return;
+        }
+
+        _busy = true;
+        _operationError = null;
+        try
+        {
+            _execution = await Operations.ExecuteAsync(
+                preview.TokenId,
+                typedConfirmation,
+                _actor ?? ActorInfo.System,
+                default);
+            _preview = null;
+            await LoadAsync();
+            if (_drawerOpen)
+            {
+                await RefreshDetailAsync();
+            }
+
+            if (_scopeNodeId is Guid nodeId && _treeNodes.Count > 0)
+            {
+                await LoadNodeChildrenAsync(nodeId);
+            }
+        }
+        catch (OperationConfirmationException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "执行失败：" + exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CancelPreviewAsync() => _preview = null;
+
+    private void CloseResult() => _execution = null;
+
+    private async Task OpenCreateWizardAsync()
+    {
+        _treeOpen = false;
+        _operationError = null;
+
+        if (_groups.Count == 0 && _scopeNodeId is Guid nodeId)
+        {
+            try
+            {
+                _groups = await WebsiteService.GetGroupsAsync(nodeId, default);
+            }
+            catch
+            {
+                // 分组加载失败不阻塞建站，向导仍可使用默认分组。
+            }
+        }
+
+        _createWizardOpen = true;
+    }
+
+    private void CloseCreateWizard() => _createWizardOpen = false;
+
+    private async Task SubmitCreateWizardAsync(WebsiteCreateWizardResult result)
+    {
+        var parameters = new JsonObject
+        {
+            ["type"] = result.Type,
+            ["primaryDomain"] = result.PrimaryDomain,
+            ["otherDomains"] = new JsonArray(result.OtherDomains
+                .Select(domain => (JsonNode?)JsonValue.Create(domain))
+                .ToArray()),
+            ["alias"] = result.Alias,
+            ["remark"] = result.Remark,
+            ["webSiteGroupId"] = result.GroupId,
+            ["port"] = result.Port,
+            ["runtimeId"] = result.RuntimeId,
+            ["runtimeType"] = result.RuntimeType,
+            ["proxy"] = result.Proxy,
+            ["parentWebsiteId"] = result.ParentWebsiteId,
+            ["siteDir"] = result.SiteDir,
+            ["IPV6"] = result.IpV6
+        };
+
+        await PreviewAsync("website.create", parameters, result.NodeId);
+        if (_preview is not null)
+        {
+            _createWizardOpen = false;
+        }
+    }
+
+    private Task SetPrimaryDomainAsync(WebsiteDomain domain) => PreviewAsync(
+        "domain.primary",
+        new JsonObject
+        {
+            ["websiteId"] = _detail?.Id ?? 0,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty,
+            ["domainId"] = domain.Id,
+            ["primaryDomain"] = domain.Domain
+        },
+        _detail?.NodeId ?? _drawerNodeId);
+
+    private void OpenSslRequestDialog()
+    {
+        if (_detail is null)
+        {
+            return;
+        }
+
+        _treeOpen = false;
+        _operationError = null;
+        _sslRequestOpen = true;
+    }
+
+    private void CloseSslRequestDialog() => _sslRequestOpen = false;
+
+    private async Task SubmitSslRequestAsync(SslRequestResult result)
+    {
+        var parameters = new JsonObject
+        {
+            ["primaryDomain"] = result.PrimaryDomain,
+            ["otherDomains"] = new JsonArray(result.OtherDomains
+                .Select(domain => (JsonNode?)JsonValue.Create(domain))
+                .ToArray()),
+            ["provider"] = result.Provider,
+            ["acmeAccountId"] = result.AcmeAccountId,
+            ["dnsAccountId"] = result.DnsAccountId,
+            ["description"] = result.Description,
+            ["autoRenew"] = result.AutoRenew,
+            ["keyType"] = result.KeyType
+        };
+
+        await PreviewAsync("ssl.request", parameters, result.NodeId);
+        if (_preview is not null)
+        {
+            _sslRequestOpen = false;
+        }
+    }
+
+    private Task DisableHttpsAsync() => PreviewAsync(
+        "ssl.disable",
+        new JsonObject
+        {
+            ["websiteId"] = _detail?.Id ?? 0,
+            ["name"] = _detail?.PrimaryDomain ?? string.Empty
+        },
+        _detail?.NodeId ?? _drawerNodeId);
+
+    private void OpenTree() => _treeOpen = true;
+
+    private void CloseTree() => _treeOpen = false;
+
+    private async Task ApplySearchAsync()
+    {
+        _search = string.IsNullOrWhiteSpace(_searchInput) ? null : _searchInput.Trim();
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task ClearSearchAsync()
+    {
+        _searchInput = null;
+        _search = null;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await ApplySearchAsync();
+        }
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_view is null || _view.Page <= 1)
+        {
+            return;
+        }
+
+        _page--;
+        await LoadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (_view is null || _view.Page >= _view.TotalPages)
+        {
+            return;
+        }
+
+        _page++;
+        await LoadAsync();
+    }
+
+    private bool IsEnabledNode(Guid nodeId) => _enabledNodes.Any(node => node.Id.Value == nodeId);
+
+    private static string NodeTreeId(Guid nodeId) => $"node:{nodeId:N}";
+
+    private static string GroupTreeId(Guid nodeId, long groupId) => $"group:{nodeId:N}:{groupId}";
+
+    private static string SiteTreeId(Guid nodeId, long websiteId) => $"site:{nodeId:N}:{websiteId}";
+
+    private static bool TryParseNodeId(string id, out Guid nodeId)
+    {
+        nodeId = Guid.Empty;
+        if (!id.StartsWith("node:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return Guid.TryParse(id["node:".Length..], out nodeId);
+    }
+
+    private static bool TryParseGroupId(string id, out Guid nodeId, out long groupId)
+    {
+        nodeId = Guid.Empty;
+        groupId = 0;
+        if (!id.StartsWith("group:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var parts = id.Split(':');
+        return parts.Length == 3
+            && Guid.TryParse(parts[1], out nodeId)
+            && long.TryParse(parts[2], out groupId);
+    }
+
+    private static bool TryParseSiteId(string id, out Guid nodeId, out long websiteId)
+    {
+        nodeId = Guid.Empty;
+        websiteId = 0;
+        if (!id.StartsWith("site:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var parts = id.Split(':');
+        return parts.Length == 3
+            && Guid.TryParse(parts[1], out nodeId)
+            && long.TryParse(parts[2], out websiteId);
+    }
+
+    private bool IsValidTreeId(string id)
+    {
+        if (id == RootId)
+        {
+            return true;
+        }
+
+        if (TryParseNodeId(id, out var nodeId) || TryParseGroupId(id, out nodeId, out _) || TryParseSiteId(id, out nodeId, out _))
+        {
+            return IsEnabledNode(nodeId);
+        }
+
+        return false;
+    }
+
+    private static string StatusBadgeClass(string? status) => status?.ToLowerInvariant() switch
+    {
+        "running" => "badge-ok",
+        "stopped" => "badge-unknown",
+        "error" => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private async Task SavePreferenceAsync()
+    {
+        var payload = JsonSerializer.Serialize(
+            new Preference(_selectedTreeId ?? RootId, _scopeNodeId?.ToString()),
+            PreferenceJsonOptions);
+        await InvokeJsAsync("localStorage.setItem", PreferenceKey, payload);
+    }
+
+    private async Task<string?> ReadPreferenceAsync()
+    {
+        try
+        {
+            var raw = await JS.InvokeAsync<string?>("localStorage.getItem", PreferenceKey);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var parsed = JsonSerializer.Deserialize<Preference>(raw, PreferenceJsonOptions);
+            return string.IsNullOrWhiteSpace(parsed?.TreeId) ? null : parsed!.TreeId;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private async Task UpdateUrlAsync(Guid? nodeId, long? websiteId)
+    {
+        var query = new List<string>();
+        if (nodeId is Guid id)
+        {
+            query.Add("nodeId=" + id.ToString("N"));
+        }
+
+        if (websiteId is long website)
+        {
+            query.Add("id=" + website);
+        }
+
+        var relative = "/websites" + (query.Count > 0 ? "?" + string.Join("&", query) : string.Empty);
+        // 使用相对地址即可保留当前部署的 PathBase，history.replaceState 不会触发导航。
+        await InvokeJsAsync("history.replaceState", null, string.Empty, relative);
+    }
+
+    private async Task InvokeJsAsync(string identifier, params object?[] args)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(identifier, args);
+        }
+        catch (Exception)
+        {
+            // 预渲染或 JS 不可用时静默降级：树/深链仍可用，仅失去记忆能力。
+        }
+    }
+
+    private void _treeErrorReset()
+    {
+    }
+
+    private sealed record WebsiteView(
+        IReadOnlyList<WebsiteRow> Rows,
+        int TotalMatched,
+        int Page,
+        int PageSize,
+        int TotalPages,
+        IReadOnlyList<WebsiteGroupInfo> Groups,
+        bool Truncated,
+        IReadOnlyList<string> Warnings,
+        DateTimeOffset GeneratedAt);
+
+    private sealed record NodeLoad(NodeSummary Node, WebsiteListResult? Result, string? Error);
+
+    private sealed record Preference(string TreeId, string? NodeId);
+}

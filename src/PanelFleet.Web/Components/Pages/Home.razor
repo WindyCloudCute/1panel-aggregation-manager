@@ -1,0 +1,363 @@
+@page "/"
+@attribute [Authorize]
+@implements IAsyncDisposable
+@using PanelFleet.Application.Overview
+@inject IOverviewService OverviewService
+@inject IOverviewBroadcaster Broadcaster
+@inject IOverviewRefreshQueue RefreshQueue
+@inject OverviewOptions Options
+
+<PageTitle>总览</PageTitle>
+
+<PageShell>
+<div class="page-header">
+    <h1>总览</h1>
+    <div class="actions">
+        @if (_overview is not null)
+        {
+            <span class="muted small">
+                最近更新 @FormatClock(_overview.DataUpdatedAt)@Age(_overview.DataUpdatedAt)
+                @if (_overview.LastRunElapsed is { } elapsed)
+                {
+                    <text> · 本轮 @FormatElapsed(elapsed)</text>
+                }
+                @if (_overview.IsRefreshing || _requested)
+                {
+                    <text> · <Spinner />采集中 @_completed/@Math.Max(_nodeCount, _overview.Totals.EnabledCount)</text>
+                }
+            </span>
+        }
+        <button type="button" class="btn btn-primary" @onclick="RequestRefresh" disabled="@IsRefreshing">
+            @(IsRefreshing ? "刷新中…" : "刷新")
+        </button>
+    </div>
+</div>
+
+@if (_overview is null && _error is not null)
+{
+    <StatePanel Tone="error"
+                Title="总览加载失败"
+                Description="@_error"
+                Retry="ReloadAsync" />
+}
+
+@if (_overview is null)
+{
+    @if (_error is null)
+    {
+        <OverviewSkeleton />
+    }
+}
+else if (_overview.Nodes.Count == 0)
+{
+    <StatePanel Tone="neutral"
+                Title="还没有节点"
+                Description="接入第一台 1Panel 节点后，这里会显示各节点的运行指标、资源计数与采集状态。">
+        <a class="btn btn-primary" href="/nodes/new">添加节点</a>
+    </StatePanel>
+}
+else
+{
+    @if (_error is not null)
+    {
+        <div class="alert alert-error">@_error</div>
+    }
+
+    <SummaryBar Overview="_overview" />
+
+    <div class="overview-grid">
+        @foreach (var node in _overview.Nodes)
+        {
+            <NodeCard Snapshot="node"
+                      Now="_now"
+                      IsRetrying="_retrying.Contains(node.NodeId)"
+                      OnRetry="RetryAsync" />
+        }
+    </div>
+}
+</PageShell>
+
+@code {
+    private FleetOverview? _overview;
+    private string? _error;
+    private bool _requested;
+    private int _completed;
+    private int _nodeCount;
+    private DateTimeOffset _now = DateTimeOffset.Now;
+    private bool _interactive;
+    private IOverviewSubscription? _subscription;
+    private CancellationTokenSource? _cts;
+    private Task? _consumeTask;
+    private Task? _timerTask;
+    private PeriodicTimer? _timer;
+    private readonly HashSet<NodeId> _retrying = [];
+
+    private bool IsRefreshing => _requested || _overview?.IsRefreshing == true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _error = null;
+        try
+        {
+            _overview = await OverviewService.GetSnapshotAsync(default);
+            _now = DateTimeOffset.Now;
+            if (ShouldTriggerRefresh(_overview))
+            {
+                RequestRefresh();
+            }
+        }
+        catch (Exception exception)
+        {
+            _error = "加载总览失败：" + exception.Message;
+        }
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _interactive || !RendererInfo.IsInteractive)
+        {
+            return Task.CompletedTask;
+        }
+
+        _interactive = true;
+        _cts = new CancellationTokenSource();
+        _subscription = Broadcaster.Subscribe();
+        _consumeTask = ConsumeAsync(_cts.Token);
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        _timerTask = TickAsync(_cts.Token);
+        return Task.CompletedTask;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts?.Cancel();
+
+        if (_consumeTask is not null)
+        {
+            try
+            {
+                await _consumeTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        if (_timerTask is not null)
+        {
+            try
+            {
+                await _timerTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        _timer?.Dispose();
+
+        if (_subscription is not null)
+        {
+            await _subscription.DisposeAsync().ConfigureAwait(false);
+        }
+
+        _cts?.Dispose();
+    }
+
+    private void RequestRefresh()
+    {
+        if (IsRefreshing)
+        {
+            return;
+        }
+
+        _requested = true;
+        RefreshQueue.RequestFull();
+    }
+
+    private async Task RetryAsync(NodeId nodeId)
+    {
+        if (!_retrying.Add(nodeId))
+        {
+            return;
+        }
+
+        StateHasChanged();
+        try
+        {
+            var snapshot = await OverviewService.RefreshNodeAsync(nodeId, force: true, CancellationToken.None);
+            ApplySnapshot(snapshot);
+        }
+        catch (Exception exception)
+        {
+            _error = "重试失败：" + exception.Message;
+        }
+        finally
+        {
+            _retrying.Remove(nodeId);
+            StateHasChanged();
+        }
+    }
+
+    private async Task ConsumeAsync(CancellationToken cancellationToken)
+    {
+        if (_subscription is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await foreach (var overviewEvent in _subscription.Events.WithCancellation(cancellationToken))
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                await InvokeAsync(() =>
+                {
+                    ApplyEvent(overviewEvent);
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            await InvokeAsync(() =>
+            {
+                _error = "总览推送中断：" + exception.Message;
+                StateHasChanged();
+            });
+        }
+    }
+
+    private async Task TickAsync(CancellationToken cancellationToken)
+    {
+        if (_timer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            while (await _timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(() =>
+                {
+                    _now = DateTimeOffset.Now;
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void ApplyEvent(OverviewEvent overviewEvent)
+    {
+        _now = DateTimeOffset.Now;
+
+        switch (overviewEvent)
+        {
+            case OverviewEvent.RunStarted started:
+                _requested = false;
+                _completed = 0;
+                _nodeCount = started.NodeCount;
+                if (_overview is not null)
+                {
+                    _overview = _overview with { IsRefreshing = true };
+                }
+
+                break;
+
+            case OverviewEvent.NodeUpdated updated:
+                ApplySnapshot(updated.Snapshot);
+                _completed++;
+                break;
+
+            case OverviewEvent.RunCompleted completed:
+                _overview = completed.Overview;
+                _requested = false;
+                _completed = _nodeCount;
+                break;
+        }
+    }
+
+    private void ApplySnapshot(NodeOverviewSnapshot snapshot)
+    {
+        if (_overview is null)
+        {
+            return;
+        }
+
+        var nodes = _overview.Nodes
+            .Select(node => node.NodeId == snapshot.NodeId ? snapshot : node)
+            .ToArray();
+
+        _overview = OverviewSnapshotFactory.Build(
+            nodes,
+            _now,
+            _overview.IsRefreshing || _requested,
+            _overview.LastRunElapsed,
+            _overview.Generation + 1);
+    }
+
+    private bool ShouldTriggerRefresh(FleetOverview overview)
+    {
+        if (overview.Nodes.Any(node => node.IsEnabled && node.State == NodeDataState.Pending))
+        {
+            return true;
+        }
+
+        if (overview.DataUpdatedAt is not { } updatedAt)
+        {
+            return true;
+        }
+
+        return DateTimeOffset.UtcNow - updatedAt > Options.CacheTtl;
+    }
+
+    private static string FormatClock(DateTimeOffset? time) =>
+        time?.ToLocalTime().ToString("HH:mm:ss") ?? "—";
+
+    private static string Age(DateTimeOffset? time)
+    {
+        if (time is not { } value)
+        {
+            return string.Empty;
+        }
+
+        var delta = DateTimeOffset.Now - value;
+        if (delta < TimeSpan.FromSeconds(5))
+        {
+            return string.Empty;
+        }
+
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return $"（{(int)delta.TotalSeconds} 秒前）";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            return $"（{(int)delta.TotalMinutes} 分钟前）";
+        }
+
+        return $"（{(int)delta.TotalHours} 小时前）";
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed) =>
+        elapsed.TotalSeconds < 10
+            ? $"{elapsed.TotalMilliseconds:0}ms"
+            : $"{elapsed.TotalSeconds:0.0}s";
+}

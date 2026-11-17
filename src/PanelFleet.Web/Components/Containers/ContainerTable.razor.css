@@ -1,0 +1,85 @@
+.container-table {
+    font-size: 13px;
+}
+
+.container-table th,
+.container-table td {
+    vertical-align: top;
+}
+
+.container-table .col-select {
+    width: 32px;
+    text-align: center;
+}
+
+.container-table .col-actions {
+    width: 1%;
+    white-space: nowrap;
+}
+
+.container-table .container-row {
+    cursor: pointer;
+    transition: background var(--dur, 200ms) var(--ease-out, ease);
+}
+
+.container-table .container-row:hover {
+    background: var(--panel-hover);
+}
+
+.container-table .container-row.is-selected {
+    background: var(--primary-soft);
+}
+
+.container-table .container-row.is-active {
+    background: var(--primary-soft);
+    box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.container-table .container-name {
+    font-weight: 600;
+}
+
+.container-table .pinned-badge {
+    margin-left: 6px;
+    font-size: 10px;
+    padding: 1px 6px;
+}
+
+.container-table .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.container-table .small {
+    font-size: 12px;
+}
+
+.container-table .cell-ellipsis {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.container-table .stats-cell {
+    min-width: 96px;
+}
+
+.container-table .stat-line {
+    display: flex;
+    gap: 6px;
+    justify-content: space-between;
+}
+
+.container-table .row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-width: 280px;
+    justify-content: flex-end;
+}
+
+.btn-xs {
+    padding: 2px 6px;
+    font-size: 12px;
+    line-height: 1.4;
+}

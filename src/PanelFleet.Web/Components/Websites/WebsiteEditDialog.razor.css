@@ -1,0 +1,47 @@
+.website-modal {
+    width: min(560px, 94vw);
+    max-height: 86vh;
+    overflow-y: auto;
+}
+
+.website-modal h2 {
+    margin-top: 0;
+}
+
+.form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.form-row.checkbox-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.form-label {
+    font-weight: 600;
+    color: #374151;
+}
+
+.required {
+    color: var(--error);
+}
+
+.checkbox-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-inline input {
+    min-width: auto;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}

@@ -1,0 +1,9 @@
+@using PanelFleet.Application.Cronjobs
+
+<span class="cronjob-type">@CronjobTypes.Label(Type)</span>
+
+@code {
+    /// <summary>1Panel 任务类型（shell/app/website/...）。</summary>
+    [Parameter]
+    public string? Type { get; set; }
+}

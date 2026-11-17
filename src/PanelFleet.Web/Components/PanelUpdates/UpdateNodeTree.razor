@@ -1,0 +1,158 @@
+@using PanelFleet.Application.PanelUpdates
+
+@* 面板更新的左侧节点树：全部节点根可全选，节点行可单独勾选；仅可升级节点可选。 *@
+@if (Nodes is null || Nodes.Count == 0)
+{
+    <div class="update-tree-panel">
+        <p class="update-tree-empty">还没有节点。先到 <a href="/nodes/new">添加节点</a> 接入 1Panel。</p>
+    </div>
+}
+else
+{
+    <div class="update-tree-panel" role="tree" aria-label="面板更新节点选择">
+        <div class="update-tree-head">
+            <span class="update-tree-title">节点选择</span>
+            <span class="muted small">已选 @SelectedCount / @UpgradableCount 可升级</span>
+        </div>
+
+        <div class="update-tree-row update-tree-root">
+            <button type="button"
+                    class="update-tree-check @(AllSelected ? "is-checked" : null) @(AllSelected || NoneSelected ? null : "is-mixed")"
+                    role="checkbox"
+                    aria-checked="@AriaChecked"
+                    aria-label="全选或取消全部可升级节点"
+                    disabled="@(Busy || UpgradableCount == 0)"
+                    title="全选/取消全部可升级节点"
+                    @onclick="ToggleAllAsync">
+                @if (AllSelected)
+                {
+                    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
+                        <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                }
+                else if (!NoneSelected)
+                {
+                    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
+                        <path d="M4 8h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                }
+            </button>
+            <button type="button"
+                    class="update-tree-label update-tree-label-root"
+                    title="清除右侧高亮"
+                    @onclick="() => OnSelectNode.InvokeAsync(Guid.Empty)">
+                <span class="update-tree-name">全部节点</span>
+                <span class="update-tree-hint">共 @Nodes.Count 个节点，仅可升级节点可勾选</span>
+            </button>
+        </div>
+
+        @foreach (var node in Nodes)
+        {
+            var nodeId = node.NodeId.Value;
+            var isSelected = SelectedNodeIds.Contains(nodeId);
+            <div class="update-tree-row @(node.CanUpgrade ? null : "is-blocked") @(HighlightedNodeId == nodeId ? "is-highlighted" : null)">
+                <button type="button"
+                        class="update-tree-check @(isSelected ? "is-checked" : null)"
+                        role="checkbox"
+                        aria-checked="@(isSelected ? "true" : "false")"
+                        aria-label="选择节点 @node.NodeName"
+                        disabled="@(Busy || !node.CanUpgrade)"
+                        title="@(node.CanUpgrade ? "勾选后参与批量升级" : Describe(node))"
+                        @onclick="() => ToggleAsync(node)">
+                    @if (isSelected)
+                    {
+                        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
+                            <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    }
+                </button>
+
+                <button type="button"
+                        class="update-tree-label"
+                        title="在右侧定位该节点"
+                        @onclick="() => SelectNodeAsync(node)">
+                    <span class="update-tree-name">
+                        @node.NodeName
+                        <span class="badge @StatusClass(node)">@StatusText(node)</span>
+                    </span>
+                    <span class="update-tree-hint">@Describe(node)</span>
+                </button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public IReadOnlyList<PanelNodeVersionInfo>? Nodes { get; set; }
+
+    [Parameter]
+    public IReadOnlyCollection<Guid> SelectedNodeIds { get; set; } = Array.Empty<Guid>();
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    /// <summary>当前在右侧版本表格中高亮的节点。</summary>
+    [Parameter]
+    public Guid? HighlightedNodeId { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnToggleSelection { get; set; }
+
+    /// <summary>参数为 true 表示全选可升级节点，false 表示全部取消。</summary>
+    [Parameter]
+    public EventCallback<bool> OnToggleAll { get; set; }
+
+    /// <summary>点击节点行（用于联动右侧表格高亮）；<see cref="Guid.Empty" /> 表示清除高亮。</summary>
+    [Parameter]
+    public EventCallback<Guid> OnSelectNode { get; set; }
+
+    private int UpgradableCount => Nodes?.Count(node => node.CanUpgrade) ?? 0;
+
+    private int SelectedCount => Nodes?.Count(node => node.CanUpgrade && SelectedNodeIds.Contains(node.NodeId.Value)) ?? 0;
+
+    private bool AllSelected => UpgradableCount > 0 && SelectedCount == UpgradableCount;
+
+    private bool NoneSelected => SelectedCount == 0;
+
+    private string AriaChecked => AllSelected ? "true" : NoneSelected ? "false" : "mixed";
+
+    private Task ToggleAllAsync()
+    {
+        if (Busy || UpgradableCount == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        return OnToggleAll.InvokeAsync(!AllSelected);
+    }
+
+    private Task ToggleAsync(PanelNodeVersionInfo node) =>
+        !Busy && node.CanUpgrade ? OnToggleSelection.InvokeAsync(node.NodeId.Value) : Task.CompletedTask;
+
+    private Task SelectNodeAsync(PanelNodeVersionInfo node) =>
+        OnSelectNode.InvokeAsync(node.NodeId.Value);
+
+    private static string StatusText(PanelNodeVersionInfo node) =>
+        !node.NodeEnabled ? "已禁用" : !node.Online ? "离线" : !node.VersionReadable ? "版本不可读" : node.AlreadyLatest ? "已是最新" : node.CanUpgrade ? "可升级" : "预检未通过";
+
+    private static string StatusClass(PanelNodeVersionInfo node) =>
+        !node.NodeEnabled ? "badge-unknown" : !node.Online || !node.VersionReadable ? "badge-error" : node.AlreadyLatest || node.CanUpgrade ? "badge-ok" : "badge-warn";
+
+    private static string Describe(PanelNodeVersionInfo node)
+    {
+        var current = string.IsNullOrWhiteSpace(node.CurrentVersion) ? "—" : node.CurrentVersion;
+        var available = string.IsNullOrWhiteSpace(node.AvailableVersion) ? "—" : node.AvailableVersion;
+        var text = $"{current} → {available}";
+        if (node.BlockingReasons.Count > 0)
+        {
+            text += " · " + node.BlockingReasons[0];
+        }
+        else if (node.Warnings.Count > 0)
+        {
+            text += " · " + node.Warnings[0];
+        }
+
+        return text;
+    }
+}

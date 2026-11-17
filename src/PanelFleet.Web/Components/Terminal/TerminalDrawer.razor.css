@@ -1,0 +1,251 @@
+/* 终端抽屉：可嵌入任意页面的浮动终端面板（复用 TerminalPanel 的 WS 逻辑）。 */
+
+.terminal-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-drawer, 1000);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 24px;
+    background: var(--overlay, rgba(15, 23, 42, 0.55));
+    backdrop-filter: blur(2px);
+    animation: terminal-drawer-fade var(--dur, 160ms) var(--ease-out, ease-out);
+}
+
+.terminal-drawer-backdrop.is-fullscreen {
+    padding: 0;
+    justify-content: center;
+}
+
+.terminal-drawer {
+    display: flex;
+    flex-direction: column;
+    width: min(1100px, 92vw);
+    height: 85vh;
+    max-height: 85vh;
+    overflow: hidden;
+    background: var(--panel, #fff);
+    color: var(--text, #0f172a);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-xl, 22px);
+    box-shadow: var(--shadow-lg, 0 24px 64px rgba(15, 23, 42, 0.28));
+    animation: terminal-drawer-slide var(--dur, 160ms) var(--ease-out, ease-out);
+}
+
+.terminal-drawer.is-fullscreen {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+}
+
+.terminal-drawer-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-shrink: 0;
+    gap: 16px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    background: var(--panel, #fff);
+}
+
+.terminal-drawer-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.terminal-drawer-eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted, #64748b);
+}
+
+.terminal-drawer-title {
+    margin: 0;
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.terminal-drawer-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.terminal-drawer-badge {
+    padding: 1px 8px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.terminal-drawer-badge.is-host {
+    color: var(--primary, #2563eb);
+    background: var(--primary-soft, rgba(37, 99, 235, 0.1));
+}
+
+.terminal-drawer-badge.is-container {
+    color: var(--ok, #15803d);
+    background: var(--ok-soft, rgba(21, 128, 61, 0.1));
+}
+
+.terminal-drawer-container {
+    overflow: hidden;
+    max-width: 320px;
+    color: var(--muted, #64748b);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.terminal-drawer-actions {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+}
+
+.terminal-drawer-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.terminal-drawer-action:active {
+    transform: scale(0.97);
+}
+
+.terminal-drawer-action:focus-visible {
+    outline: 2px solid var(--primary, #2563eb);
+    outline-offset: 2px;
+}
+
+.terminal-drawer-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.terminal-drawer-action-text {
+    font-size: 13px;
+}
+
+.terminal-drawer-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    padding: 12px 16px 16px;
+    overflow: hidden;
+}
+
+.terminal-drawer-body ::deep .terminal-panel {
+    flex: 1;
+    min-height: 0;
+}
+
+.terminal-drawer-body ::deep .terminal-surface {
+    flex: 1;
+    height: auto;
+    min-height: 220px;
+}
+
+.terminal-drawer-body ::deep .terminal-hint {
+    margin: 0;
+    font-size: 12px;
+}
+
+.terminal-drawer-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    gap: 6px;
+    border: 1px dashed var(--border, #e5e7eb);
+    border-radius: var(--radius-lg, 16px);
+    padding: 32px;
+    color: var(--muted, #64748b);
+    text-align: center;
+}
+
+.terminal-drawer-empty strong {
+    color: var(--text, #0f172a);
+}
+
+.terminal-drawer-empty .btn {
+    margin-top: 8px;
+}
+
+@keyframes terminal-drawer-fade {
+    from {
+        opacity: 0;
+    }
+}
+
+@keyframes terminal-drawer-slide {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.99);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .terminal-drawer-backdrop,
+    .terminal-drawer {
+        animation: none;
+    }
+
+    .terminal-drawer-action:active {
+        transform: none;
+    }
+}
+
+@media (max-width: 768px) {
+    .terminal-drawer-backdrop {
+        padding: 0;
+        align-items: stretch;
+        justify-content: stretch;
+    }
+
+    .terminal-drawer {
+        width: 100vw;
+        height: 100dvh;
+        max-height: none;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .terminal-drawer-head {
+        padding: 10px 12px;
+    }
+
+    .terminal-drawer-body {
+        padding: 8px 10px 10px;
+    }
+
+    .terminal-drawer-action-text {
+        display: none;
+    }
+
+    .terminal-drawer-container {
+        max-width: 180px;
+    }
+}

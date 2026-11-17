@@ -1,0 +1,374 @@
+@using System.Globalization
+@using PanelFleet.Application.Websites
+
+<div class="drawer-backdrop" @onclick="() => OnClose.InvokeAsync()">
+    <aside class="website-drawer" @onclick:stopPropagation="true">
+        <div class="drawer-head">
+            <div>
+                <h2>@(Detail?.PrimaryDomain ?? "网站详情")</h2>
+                <div class="muted small">@NodeName @(Detail is null ? string.Empty : $"· 网站 #{Detail.Id}")</div>
+            </div>
+            <div class="actions">
+                @if (Detail is not null)
+                {
+                    <a class="btn" href="@LogUrl" title="查看网站日志（由日志模块提供）">日志</a>
+                    @if (!string.IsNullOrWhiteSpace(PanelUrl))
+                    {
+                        <a class="btn" href="@PanelUrl" target="_blank" rel="noopener noreferrer" title="在 1Panel 中打开该网站">1Panel</a>
+                    }
+                    <button type="button" class="btn" @onclick="() => OnEdit.InvokeAsync(Detail)" disabled="@Busy">编辑</button>
+                    <button type="button" class="btn" @onclick="() => OnRefresh.InvokeAsync()" disabled="@Busy">刷新</button>
+                }
+                <button type="button" class="btn" @onclick="() => OnClose.InvokeAsync()">关闭</button>
+            </div>
+        </div>
+
+        @if (Loading)
+        {
+            <p class="muted">正在加载网站详情…</p>
+        }
+        @if (!string.IsNullOrWhiteSpace(Error))
+        {
+            <div class="alert alert-error">@Error</div>
+        }
+
+        @if (Detail is not null)
+        {
+            <section class="drawer-section">
+                <h3>基础信息</h3>
+                <table class="table detail-table">
+                    <tbody>
+                        <tr><th>主域名</th><td>@Detail.PrimaryDomain</td></tr>
+                        <tr><th>别名</th><td>@(Detail.Alias ?? "-")</td></tr>
+                        <tr><th>类型</th><td>@(Detail.Type ?? "-")</td></tr>
+                        <tr><th>状态</th><td>@Detail.Status</td></tr>
+                        <tr><th>协议</th><td>@(Detail.Protocol ?? "-")</td></tr>
+                        <tr><th>分组</th><td>@Detail.GroupName</td></tr>
+                        <tr><th>创建时间</th><td>@FormatDate(Detail.CreatedAt)</td></tr>
+                        <tr><th>到期</th><td>@FormatDate(Detail.ExpireDate)</td></tr>
+                        <tr><th>SSL 状态</th><td>@SslStateText</td></tr>
+                        <tr><th>反代数量</th><td>@Proxies.Count</td></tr>
+                        <tr><th>站点目录</th><td class="detail-cell">@(Detail.SitePath ?? Detail.SiteDir ?? "-")</td></tr>
+                        <tr><th>运行环境</th><td>@(Detail.RuntimeName ?? "-") @(string.IsNullOrWhiteSpace(Detail.RuntimeType) ? string.Empty : $"（{Detail.RuntimeType}）")</td></tr>
+                        <tr><th>应用</th><td>@(Detail.AppName ?? "-")</td></tr>
+                        <tr><th>收藏 / IPv6</th><td>@(Detail.Favorite ? "是" : "否") / @(Detail.IPv6 ? "是" : "否")</td></tr>
+                        <tr><th>访问日志</th><td class="detail-cell">@(Detail.AccessLogEnabled ? Detail.AccessLogPath ?? "已启用" : "未启用")</td></tr>
+                        <tr><th>错误日志</th><td class="detail-cell">@(Detail.ErrorLogEnabled ? Detail.ErrorLogPath ?? "已启用" : "未启用")</td></tr>
+                        <tr><th>备注</th><td>@(Detail.Remark ?? "-")</td></tr>
+                        <tr><th>域名</th><td>@(Detail.Domains.Count == 0 ? "-" : string.Join("，", Detail.Domains))</td></tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="drawer-section">
+                <div class="section-head">
+                    <h3>域名管理</h3>
+                    <button type="button" class="btn btn-primary" @onclick="() => OnDomainCreate.InvokeAsync()" disabled="@Busy">新增域名</button>
+                </div>
+                @if (Domains.Count == 0)
+                {
+                    <p class="muted small">暂无域名。</p>
+                }
+                else
+                {
+                    <table class="table">
+                        <thead><tr><th>域名</th><th>端口</th><th>SSL</th><th>操作</th></tr></thead>
+                        <tbody>
+                            @foreach (var domain in Domains)
+                            {
+                                <tr>
+                                    <td>
+                                        @domain.Domain
+                                        @if (IsPrimaryDomain(domain))
+                                        {
+                                            <span class="badge badge-ok">主域名</span>
+                                        }
+                                    </td>
+                                    <td>@domain.Port</td>
+                                    <td>
+                                        <span class="badge @(domain.Ssl ? "badge-ok" : "badge-unknown")">@(domain.Ssl ? "已开启" : "未开启")</span>
+                                    </td>
+                                    <td>
+                                        <div class="actions">
+                                            <button type="button" class="btn" @onclick="() => OnDomainPrimary.InvokeAsync(domain)"
+                                                    disabled="@(Busy || IsPrimaryDomain(domain))"
+                                                    title="把该域名设为网站主域名">
+                                                @(IsPrimaryDomain(domain) ? "当前主域名" : "设为主域名")
+                                            </button>
+                                            <button type="button" class="btn" @onclick="() => OnDomainSslToggle.InvokeAsync(domain)" disabled="@Busy">
+                                                @(domain.Ssl ? "关闭 SSL" : "开启 SSL")
+                                            </button>
+                                            <button type="button" class="btn btn-danger" @onclick="() => OnDomainDelete.InvokeAsync(domain)" disabled="@Busy">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            <section class="drawer-section">
+                <div class="section-head">
+                    <h3>反向代理</h3>
+                    <button type="button" class="btn btn-primary" @onclick="() => OnProxyCreate.InvokeAsync()" disabled="@Busy">新增代理</button>
+                </div>
+                @if (Proxies.Count == 0)
+                {
+                    <p class="muted small">暂无反向代理配置。</p>
+                }
+                else
+                {
+                    <table class="table">
+                        <thead><tr><th>名称</th><th>路径</th><th>代理目标</th><th>状态</th><th>操作</th></tr></thead>
+                        <tbody>
+                            @foreach (var proxy in Proxies)
+                            {
+                                <tr>
+                                    <td>@proxy.Name</td>
+                                    <td>@(proxy.Match ?? "-")</td>
+                                    <td class="detail-cell">@(proxy.ProxyPass ?? "-")</td>
+                                    <td>
+                                        <span class="badge @(proxy.Enable ? "badge-ok" : "badge-unknown")">@(proxy.Enable ? "启用" : "停用")</span>
+                                    </td>
+                                    <td>
+                                        <div class="actions">
+                                            <button type="button" class="btn" @onclick="() => OnProxyEdit.InvokeAsync(proxy)" disabled="@Busy">编辑</button>
+                                            <button type="button" class="btn" @onclick="() => OnProxyStatusToggle.InvokeAsync(proxy)" disabled="@Busy">
+                                                @(proxy.Enable ? "停用" : "启用")
+                                            </button>
+                                            <button type="button" class="btn btn-danger" @onclick="() => OnProxyDelete.InvokeAsync(proxy)" disabled="@Busy">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            <section class="drawer-section">
+                <div class="section-head">
+                    <h3>HTTPS / SSL</h3>
+                    <div class="actions">
+                        <button type="button" class="btn" @onclick="() => OnSslRequest.InvokeAsync()" disabled="@Busy">申请证书</button>
+                        <button type="button" class="btn btn-primary" @onclick="() => OnSslDeploy.InvokeAsync()" disabled="@Busy">部署证书</button>
+                        @if (Https?.Enable == true)
+                        {
+                            <button type="button" class="btn btn-danger" @onclick="() => OnSslDisable.InvokeAsync()" disabled="@Busy">关闭 HTTPS</button>
+                        }
+                    </div>
+                </div>
+                @if (Https is null)
+                {
+                    <p class="muted small">暂无 HTTPS 配置信息。</p>
+                }
+                else
+                {
+                    <p>
+                        <span class="badge @(Https.Enable ? "badge-ok" : "badge-unknown")">@(Https.Enable ? "已启用 HTTPS" : "未启用 HTTPS")</span>
+                        <span class="muted small">访问方式：@(Https.HttpConfig ?? "-") · 协议：@(Https.SslProtocols.Count == 0 ? "-" : string.Join(",", Https.SslProtocols)) · 端口：@(Https.HttpsPort ?? "-")</span>
+                    </p>
+                    @if (Https.Certificate is { } certificate)
+                    {
+                        <p class="muted small">
+                            当前证书：@certificate.PrimaryDomain（@certificate.Status，到期 @FormatDate(certificate.ExpireDate)）
+                        </p>
+                    }
+                }
+
+                @if (Certificates.Count > 0)
+                {
+                    <h4>节点证书</h4>
+                    <table class="table">
+                        <thead><tr><th>域名</th><th>状态</th><th>到期</th><th>操作</th></tr></thead>
+                        <tbody>
+                            @foreach (var item in Certificates)
+                            {
+                                <tr>
+                                    <td>@item.PrimaryDomain</td>
+                                    <td>@item.Status</td>
+                                    <td>@FormatDate(item.ExpireDate)</td>
+                                    <td>
+                                        <button type="button" class="btn" @onclick="() => OnSslApply.InvokeAsync(item)" disabled="@Busy">申请/续期</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            @if (IsPhpWebsite)
+            {
+                <section class="drawer-section">
+                    <h3>PHP 版本</h3>
+                    @if (Runtimes.Count == 0)
+                    {
+                        <p class="muted small">未发现可用的 PHP 运行环境。</p>
+                    }
+                    else
+                    {
+                        <div class="inline-form">
+                            <select @bind="_runtimeId" disabled="@Busy">
+                                @foreach (var runtime in Runtimes)
+                                {
+                                    <option value="@runtime.Id">@runtime.Name（@runtime.Status）</option>
+                                }
+                            </select>
+                            <button type="button" class="btn btn-primary" @onclick="ChangePhpAsync" disabled="@Busy">切换版本</button>
+                        </div>
+                    }
+                </section>
+            }
+        }
+    </aside>
+</div>
+
+@code {
+    private long _runtimeId;
+    private long _loadedDetailId;
+
+    [Parameter]
+    public WebsiteDetail? Detail { get; set; }
+
+    [Parameter]
+    public string NodeName { get; set; } = string.Empty;
+
+    [Parameter]
+    public IReadOnlyList<WebsiteDomain> Domains { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyList<WebsiteProxy> Proxies { get; set; } = [];
+
+    [Parameter]
+    public WebsiteHttpsConfig? Https { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<WebsiteRuntime> Runtimes { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyList<WebsiteSsl> Certificates { get; set; } = [];
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public bool Loading { get; set; }
+
+    [Parameter]
+    public string? Error { get; set; }
+
+    [Parameter]
+    public string? PanelUrl { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    [Parameter]
+    public EventCallback OnRefresh { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteDetail> OnEdit { get; set; }
+
+    [Parameter]
+    public EventCallback OnDomainCreate { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteDomain> OnDomainPrimary { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteDomain> OnDomainSslToggle { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteDomain> OnDomainDelete { get; set; }
+
+    [Parameter]
+    public EventCallback OnProxyCreate { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteProxy> OnProxyEdit { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteProxy> OnProxyStatusToggle { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteProxy> OnProxyDelete { get; set; }
+
+    [Parameter]
+    public EventCallback OnSslDeploy { get; set; }
+
+    [Parameter]
+    public EventCallback OnSslRequest { get; set; }
+
+    [Parameter]
+    public EventCallback OnSslDisable { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteSsl> OnSslApply { get; set; }
+
+    [Parameter]
+    public EventCallback<int> OnPhpChange { get; set; }
+
+    private bool IsPhpWebsite =>
+        string.Equals(Detail?.RuntimeType, "php", StringComparison.OrdinalIgnoreCase)
+        || (Detail?.RuntimeId > 0 && string.Equals(Detail?.Type, "runtime", StringComparison.OrdinalIgnoreCase));
+
+    private string LogUrl => Detail is null
+        ? "/logs?type=website"
+        : "/logs?type=website&nodeId=" + Detail.NodeId +
+          "&website=" + Uri.EscapeDataString(Detail.PrimaryDomain);
+
+    protected override void OnParametersSet()
+    {
+        if (Detail is null || Detail.Id == _loadedDetailId)
+        {
+            return;
+        }
+
+        _loadedDetailId = Detail.Id;
+        var matched = Runtimes.FirstOrDefault(runtime => runtime.Id == Detail.RuntimeId);
+        _runtimeId = matched?.Id ?? Runtimes.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private async Task ChangePhpAsync()
+    {
+        if (_runtimeId <= 0)
+        {
+            return;
+        }
+
+        await OnPhpChange.InvokeAsync((int)_runtimeId);
+    }
+
+    private bool IsPrimaryDomain(WebsiteDomain domain) =>
+        Detail is not null && string.Equals(domain.Domain, Detail.PrimaryDomain, StringComparison.OrdinalIgnoreCase);
+
+    private string SslStateText
+    {
+        get
+        {
+            if (Https is null)
+            {
+                return "未配置";
+            }
+
+            if (!Https.Enable)
+            {
+                return "未启用 HTTPS";
+            }
+
+            if (Https.Certificate is { } certificate)
+            {
+                return $"已启用 · {certificate.PrimaryDomain}（{certificate.Status}，到期 {FormatDate(certificate.ExpireDate)}）";
+            }
+
+            return "已启用 HTTPS（未绑定证书）";
+        }
+    }
+
+    private static string FormatDate(string? value) =>
+        DateTimeOffset.TryParse(value, out var date)
+            ? (date.Year >= 9999 ? "永久" : date.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
+            : "-";
+}

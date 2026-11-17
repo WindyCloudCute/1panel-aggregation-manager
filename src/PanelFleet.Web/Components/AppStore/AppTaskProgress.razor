@@ -1,0 +1,172 @@
+@using PanelFleet.Application.AppStore
+@implements IAsyncDisposable
+@inject AppStoreService Store
+
+@if (NodeId is not null && !string.IsNullOrWhiteSpace(TaskId))
+{
+    <div class="task-progress">
+        <div class="task-progress-head">
+            <span class="badge @StatusClass">@StatusText</span>
+            <strong>1Panel 任务</strong>
+            <code class="task-id">@TaskId</code>
+        </div>
+        @if (_status is not null)
+        {
+            <div class="muted small">
+                @_status.Name
+                @if (_status.FinishedAt is { } finishedAt)
+                {
+                    <span> · 结束于 @finishedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_status.ErrorMessage))
+            {
+                <div class="task-progress-error">@_status.ErrorMessage</div>
+            }
+        }
+        else if (_error is null)
+        {
+            <div class="muted small">正在查询任务状态…</div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="muted small">任务状态查询失败：@_error（将每 5 秒重试，任务本身不受影响）</div>
+        }
+
+        @if (_status is { IsExecuting: true })
+        {
+            <div class="muted small">任务执行中，页面每 3 秒自动刷新状态；也可手动刷新已安装列表。</div>
+        }
+    </div>
+}
+
+@code {
+    private CancellationTokenSource? _cts;
+    private Task? _loop;
+    private AppTaskStatus? _status;
+    private string? _error;
+    private NodeId? _lastNodeId;
+    private string? _lastTaskId;
+
+    [Parameter]
+    public NodeId? NodeId { get; set; }
+
+    [Parameter]
+    public string? TaskId { get; set; }
+
+    /// <summary>任务进入终态（成功/失败）后触发一次，供页面刷新已安装列表。</summary>
+    [Parameter]
+    public EventCallback OnFinished { get; set; }
+
+    private string StatusClass => _status switch
+    {
+        { IsSucceeded: true } => "badge-ok",
+        { IsFailed: true } => "badge-error",
+        { IsExecuting: true } => "badge-warn",
+        _ => "badge-unknown"
+    };
+
+    private string StatusText => _status switch
+    {
+        { IsSucceeded: true } => "任务成功",
+        { IsFailed: true } => "任务失败",
+        { IsExecuting: true } => "任务执行中",
+        null => "未知状态",
+        _ => _status.Status
+    };
+
+    protected override void OnParametersSet()
+    {
+        if (NodeId == _lastNodeId && string.Equals(TaskId, _lastTaskId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastNodeId = NodeId;
+        _lastTaskId = TaskId;
+        Restart();
+    }
+
+    private void Restart()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+        _status = null;
+        _error = null;
+
+        if (NodeId is not { } nodeId || string.IsNullOrWhiteSpace(TaskId))
+        {
+            return;
+        }
+
+        _cts = new CancellationTokenSource();
+        _loop = PollAsync(nodeId, TaskId.Trim(), _cts.Token);
+    }
+
+    private async Task PollAsync(NodeId nodeId, string taskId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            for (var attempt = 0; attempt < 400; attempt++)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                AppTaskStatus? status = null;
+                string? error = null;
+                try
+                {
+                    status = await Store.GetTaskStatusAsync(nodeId, taskId, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    error = exception.Message;
+                }
+
+                await InvokeAsync(() =>
+                {
+                    _status = status;
+                    _error = error;
+                    StateHasChanged();
+                });
+
+                if (status is { IsExecuting: false })
+                {
+                    await InvokeAsync(() => OnFinished.InvokeAsync());
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts?.Cancel();
+
+        if (_loop is not null)
+        {
+            try
+            {
+                await _loop.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        _cts?.Dispose();
+    }
+}

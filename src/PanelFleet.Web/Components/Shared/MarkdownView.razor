@@ -1,0 +1,32 @@
+@using Markdig
+
+@* 通用 Markdown 渲染组件：禁用原始 HTML（防注入），仅渲染 Markdown 语法。 *@
+<div class="markdown-body">@((MarkupString)Html)</div>
+
+@code {
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .DisableHtml()
+        .UseAdvancedExtensions()
+        .Build();
+
+    [Parameter]
+    public string? Content { get; set; }
+
+    /// <summary>最大渲染字符数，超出部分截断并提示（防止超长更新说明拖慢页面）。</summary>
+    [Parameter]
+    public int MaxLength { get; set; } = 4000;
+
+    private string Html => RenderHtml(Content, MaxLength);
+
+    /// <summary>把 Markdown 渲染为 HTML（禁用原始 HTML 标签；供组件与测试复用）。</summary>
+    public static string RenderHtml(string? content, int maxLength = 4000)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return string.Empty;
+        }
+
+        var text = content.Length <= maxLength ? content : content[..maxLength] + "\n\n> 说明过长，已截断。";
+        return Markdown.ToHtml(text, Pipeline);
+    }
+}

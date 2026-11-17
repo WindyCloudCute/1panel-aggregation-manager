@@ -1,0 +1,111 @@
+@using PanelFleet.Application.Websites
+@using PanelFleet.Web.Components.Websites
+
+<div class="modal-backdrop" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="modal website-modal" @onclick:stopPropagation="true">
+        <h2>部署 SSL 证书</h2>
+        <p class="muted small">网站：@WebsiteDomain</p>
+
+        @if (Certificates.Count == 0)
+        {
+            <div class="alert alert-warn">
+                该节点没有可用证书。请先在 1Panel 中创建/上传证书并申请成功后再部署。
+            </div>
+        }
+        else
+        {
+            <div class="form-row">
+                <label class="form-label">证书 <span class="required">*</span></label>
+                <select @bind="_sslId" disabled="@Busy">
+                    @foreach (var certificate in Certificates)
+                    {
+                        <option value="@certificate.Id">
+                            @certificate.PrimaryDomain（@(certificate.ExpireDate ?? "无到期时间")，@certificate.Status）
+                        </option>
+                    }
+                </select>
+            </div>
+            <div class="form-row">
+                <label class="form-label">HTTP 访问方式</label>
+                <select @bind="_httpConfig" disabled="@Busy">
+                    <option value="HTTPToHTTPS">HTTP 自动跳转 HTTPS</option>
+                    <option value="HTTPAlso">同时允许 HTTP 与 HTTPS</option>
+                    <option value="HTTPSOnly">仅允许 HTTPS</option>
+                </select>
+            </div>
+            <div class="alert alert-warn">
+                部署会修改 Nginx 配置并重载，可能短暂中断访问；证书域名需与网站主域名匹配。
+            </div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(CurrentHttpsText))
+        {
+            <p class="muted small">当前 HTTPS 状态：@CurrentHttpsText</p>
+        }
+
+        <div class="modal-actions">
+            <button type="button" class="btn" @onclick="() => OnCancel.InvokeAsync()" disabled="@Busy">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@(Busy || Certificates.Count == 0)">
+                @(Busy ? "处理中…" : "开始部署（预览确认后执行）")
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private long _sslId;
+    private string _httpConfig = "HTTPToHTTPS";
+    private long _loadedWebsiteId;
+
+    [Parameter]
+    public long WebsiteId { get; set; }
+
+    [Parameter]
+    public string WebsiteDomain { get; set; } = string.Empty;
+
+    [Parameter]
+    public IReadOnlyList<WebsiteSsl> Certificates { get; set; } = [];
+
+    [Parameter]
+    public WebsiteHttpsConfig? CurrentHttps { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<SslDeployResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    [Parameter]
+    public bool Loading { get; set; }
+
+    private string? CurrentHttpsText => CurrentHttps is null
+        ? null
+        : CurrentHttps.Enable
+            ? $"已启用（{CurrentHttps.HttpConfig}，证书 {CurrentHttps.Certificate?.PrimaryDomain ?? "-"}）"
+            : "未启用";
+
+    protected override void OnParametersSet()
+    {
+        if (WebsiteId == _loadedWebsiteId && _sslId > 0)
+        {
+            return;
+        }
+
+        _loadedWebsiteId = WebsiteId;
+        _httpConfig = string.IsNullOrWhiteSpace(CurrentHttps?.HttpConfig) ? "HTTPToHTTPS" : CurrentHttps!.HttpConfig!;
+        _sslId = CurrentHttps?.Certificate?.Id ?? Certificates.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (_sslId <= 0)
+        {
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(new SslDeployResult(WebsiteId, _sslId, _httpConfig));
+    }
+}

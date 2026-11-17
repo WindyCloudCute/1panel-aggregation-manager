@@ -1,0 +1,154 @@
+@using PanelFleet.Application.Websites
+
+@if (Rows.Count == 0)
+{
+    <div class="resource-empty">
+        <p>该节点没有网站。</p>
+        <p class="muted small">可在 1Panel 中创建网站后刷新；本页只做管理与只读查询，不提供建站向导。</p>
+    </div>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="table website-table">
+            <thead>
+                <tr>
+                    @if (ShowNode)
+                    {
+                        <th>节点</th>
+                    }
+                    <th>主域名</th>
+                    <th>类型</th>
+                    <th>状态</th>
+                    <th>协议 / SSL</th>
+                    <th>到期</th>
+                    <th>分组</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Rows)
+                {
+                    <tr class="@(HighlightId == row.Id ? "is-highlighted" : null)">
+                        @if (ShowNode)
+                        {
+                            <td><span class="badge badge-unknown">@row.NodeName</span></td>
+                        }
+                        <td>
+                            <div class="website-domain">
+                                @row.PrimaryDomain
+                                @if (row.Favorite)
+                                {
+                                    <span class="favorite" title="收藏">★</span>
+                                }
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(row.Alias))
+                            {
+                                <div class="muted small">@row.Alias</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(row.Remark))
+                            {
+                                <div class="muted small">@row.Remark</div>
+                            }
+                        </td>
+                        <td>@(string.IsNullOrWhiteSpace(row.Type) ? "-" : row.Type)</td>
+                        <td>
+                            <button type="button"
+                                    class="status-button @StatusClass(row.Status)"
+                                    @onclick="() => OnToggle.InvokeAsync(row)"
+                                    disabled="@Busy"
+                                    title="@(IsRunning(row.Status) ? "点击停止网站" : "点击启动网站")">
+                                @StatusText(row.Status)
+                            </button>
+                        </td>
+                        <td>
+                            <div>@(row.Protocol ?? "-")</div>
+                            @if (IsHttps(row))
+                            {
+                                <div class="muted small">SSL @(row.SslStatus ?? "")</div>
+                                <div class="muted small">@FormatDate(row.SslExpireDate)</div>
+                            }
+                        </td>
+                        <td class="muted">@FormatExpire(row.ExpireDate)</td>
+                        <td><span class="badge badge-unknown">@row.GroupName</span></td>
+                        <td>
+                            <div class="actions">
+                                <button type="button" class="btn" @onclick="() => OnDetail.InvokeAsync(row)" disabled="@Busy">详情</button>
+                                <button type="button" class="btn" @onclick="() => OnEdit.InvokeAsync(row)" disabled="@Busy">编辑</button>
+                                <a class="btn" href="@LogUrl(row)" title="查看网站日志（由日志模块提供）">日志</a>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public IReadOnlyList<WebsiteRow> Rows { get; set; } = [];
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    /// <summary>聚合视图（全部节点）时显示节点列。</summary>
+    [Parameter]
+    public bool ShowNode { get; set; }
+
+    /// <summary>从树/深链定位时高亮对应行。</summary>
+    [Parameter]
+    public long? HighlightId { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteRow> OnDetail { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteRow> OnEdit { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteRow> OnToggle { get; set; }
+
+    private static bool IsRunning(string? status) =>
+        string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsHttps(WebsiteRow row) =>
+        string.Equals(row.Protocol, "HTTPS", StringComparison.OrdinalIgnoreCase);
+
+    private static string StatusClass(string? status) => status switch
+    {
+        "Running" => "status-running",
+        "Stopped" => "status-stopped",
+        _ => "status-unknown"
+    };
+
+    private static string StatusText(string? status) => status switch
+    {
+        "Running" => "运行中（点击停止）",
+        "Stopped" => "已停止（点击启动）",
+        null or "" => "未知",
+        _ => status
+    };
+
+    private static string FormatDate(string? value) =>
+        DateTimeOffset.TryParse(value, out var date) ? date.ToLocalTime().ToString("yyyy-MM-dd") : "-";
+
+    private static string FormatExpire(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "-";
+        }
+
+        if (DateTimeOffset.TryParse(value, out var date))
+        {
+            return date.Year >= 9999 ? "永久" : date.ToLocalTime().ToString("yyyy-MM-dd");
+        }
+
+        return value;
+    }
+
+    private static string LogUrl(WebsiteRow row) =>
+        "/logs?type=website&nodeId=" + row.NodeId +
+        "&website=" + Uri.EscapeDataString(row.PrimaryDomain);
+}

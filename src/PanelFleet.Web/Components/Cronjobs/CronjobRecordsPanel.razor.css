@@ -1,0 +1,102 @@
+.cronjob-records {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+}
+
+.cronjob-records-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.cronjob-records-header h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.cronjob-records-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px 14px;
+}
+
+.cronjob-records-empty {
+    padding: 24px;
+    text-align: center;
+    color: #6b7280;
+}
+
+.cronjob-records-body {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 12px;
+}
+
+@media (max-width: 1100px) {
+    .cronjob-records-body {
+        grid-template-columns: 1fr;
+    }
+}
+
+.cronjob-records-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.cronjob-records-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.cronjob-records-table th,
+.cronjob-records-table td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    vertical-align: top;
+}
+
+.cronjob-records-table tbody tr.is-selected {
+    background: #eef2ff;
+}
+
+.cronjob-record-message {
+    max-width: 320px;
+    word-break: break-all;
+}
+
+.cronjob-log-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 8px;
+    padding: 10px;
+    background: #111827;
+}
+
+.cronjob-log-header {
+    display: flex;
+    justify-content: space-between;
+    color: #9ca3af;
+}
+
+.cronjob-log-content {
+    margin: 0;
+    max-height: 380px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #e5e7eb;
+    font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}

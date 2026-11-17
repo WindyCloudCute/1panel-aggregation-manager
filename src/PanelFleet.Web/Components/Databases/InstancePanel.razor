@@ -1,0 +1,451 @@
+@using PanelFleet.Application.Databases
+@using PanelFleet.Web.Components.Databases
+
+<div class="instance-panel card">
+    <div class="instance-head">
+        <div>
+            <div class="instance-title">
+                <strong>@Instance.Instance</strong>
+                <span class="badge badge-unknown">@DatabaseEngines.DisplayName(Instance.Engine)</span>
+                <span class="badge @(FromClass)">@FromText</span>
+                @if (Instance.Error is not null)
+                {
+                    <span class="badge badge-error" title="@Instance.Error.Message">库列表失败</span>
+                }
+            </div>
+            <div class="muted small">
+                节点 @Instance.NodeName · 版本 @(string.IsNullOrWhiteSpace(Instance.Version) ? "—" : Instance.Version)
+                · 地址 @(string.IsNullOrWhiteSpace(Instance.Address) ? "—" : Instance.Address)
+                · 记录 id @Instance.Id
+            </div>
+        </div>
+        <div class="actions">
+            @if (!string.IsNullOrEmpty(PanelUrl))
+            {
+                <a class="btn" href="@PanelUrl" target="_blank" rel="noopener noreferrer">在 1Panel 中打开</a>
+            }
+            <button type="button" class="btn" @onclick="RefreshAsync" disabled="@InstanceLoading">刷新</button>
+        </div>
+    </div>
+
+    @if (InstanceLoading)
+    {
+        <p class="muted">正在加载实例详情…</p>
+    }
+    @if (InstanceError is not null)
+    {
+        <div class="alert alert-error">@InstanceError</div>
+    }
+
+    <div class="db-tabs">
+        <button type="button" class="db-tab @(TabClass("databases"))" @onclick='() => SwitchTab("databases")'>
+            数据库（@Instance.DatabaseTotal）
+        </button>
+        @if (Instance.Engine == DatabaseEngine.MySql)
+        {
+            <button type="button" class="db-tab @(TabClass("users"))" @onclick='() => SwitchTab("users")'>
+                用户（@(Users?.Items.Count ?? 0)）
+            </button>
+            <button type="button" class="db-tab @(TabClass("grants"))" @onclick='() => SwitchTab("grants")'>
+                授权（@(Grants?.Items.Count ?? 0)）
+            </button>
+        }
+        <button type="button" class="db-tab @(TabClass("connection"))" @onclick='() => SwitchTab("connection")'>连接信息</button>
+        @if (Instance.Engine == DatabaseEngine.Redis)
+        {
+            <button type="button" class="db-tab @(TabClass("redis"))" @onclick='() => SwitchTab("redis")'>Redis 状态与配置</button>
+        }
+    </div>
+
+    @switch (_tab)
+    {
+        case "databases":
+            <div class="instance-toolbar">
+                <button type="button" class="btn btn-primary" @onclick="CreateDatabaseAsync" disabled="@InstanceLoading">
+                    新建数据库
+                </button>
+                @if (Instance.DatabasesTruncated)
+                {
+                    <span class="muted small">库数量超过单次拉取上限，仅显示前 @Instance.Databases.Count 个。</span>
+                }
+                @if (Instance.Error is not null)
+                {
+                    <span class="muted small">库列表失败：@Instance.Error.Message</span>
+                }
+            </div>
+
+            @if (Instance.Databases.Count == 0)
+            {
+                <div class="resource-empty"><p>该实例下暂无数据库。</p></div>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="table db-table">
+                        <thead>
+                            <tr>
+                                <th>数据库</th>
+                                <th>字符集 / 排序规则</th>
+                                <th>描述</th>
+                                <th>授权账号</th>
+                                <th class="col-actions">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var database in Instance.Databases)
+                            {
+                                <tr>
+                                    <td>
+                                        <button type="button" class="link-button" @onclick="() => ShowDatabaseAsync(database)">@database.Name</button>
+                                        <div class="muted small">id @database.Id · @(string.IsNullOrWhiteSpace(database.From) ? "—" : database.From)</div>
+                                    </td>
+                                    <td class="muted small">@(string.IsNullOrWhiteSpace(database.Format) ? "—" : database.Format) / @(string.IsNullOrWhiteSpace(database.Collation) ? "—" : database.Collation)</td>
+                                    <td class="muted small">@(string.IsNullOrWhiteSpace(database.Description) ? "—" : database.Description)</td>
+                                    <td class="muted small">@AuthorizedUsers(database)</td>
+                                    <td class="col-actions">
+                                        <div class="row-actions">
+                                            <button type="button" class="btn btn-xs" @onclick="() => EditDescriptionAsync(database)">编辑描述</button>
+                                            <button type="button" class="btn btn-xs btn-danger" @onclick="() => DeleteDatabaseAsync(database)">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            break;
+
+        case "users":
+            <div class="instance-toolbar">
+                <button type="button" class="btn btn-primary" @onclick="CreateUserAsync" disabled="@InstanceLoading">新建用户</button>
+                @if (Users?.Error is not null)
+                {
+                    <span class="muted small">用户列表失败：@Users.Error.Message</span>
+                }
+            </div>
+            @if (Users is null || Users.Items.Count == 0)
+            {
+                <div class="resource-empty"><p>暂无数据库用户。</p></div>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="table db-table">
+                        <thead>
+                            <tr>
+                                <th>用户名</th>
+                                <th>主机 / 访问范围</th>
+                                <th>描述</th>
+                                <th class="col-actions">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var user in Users.Items)
+                            {
+                                <tr>
+                                    <td>@user.Username</td>
+                                    <td class="muted small">@user.Host</td>
+                                    <td class="muted small">@(string.IsNullOrWhiteSpace(user.Description) ? "—" : user.Description)</td>
+                                    <td class="col-actions">
+                                        <div class="row-actions">
+                                            <button type="button" class="btn btn-xs" @onclick="() => ResetPasswordAsync(user)">重置密码</button>
+                                            <button type="button" class="btn btn-xs" @onclick="GrantAsync">授权</button>
+                                            <button type="button" class="btn btn-xs btn-danger" @onclick="() => DeleteUserAsync(user)">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            break;
+
+        case "grants":
+            <div class="instance-toolbar">
+                <button type="button" class="btn btn-primary" @onclick="GrantAsync" disabled="@InstanceLoading">授权</button>
+                @if (Grants?.Error is not null)
+                {
+                    <span class="muted small">授权列表失败：@Grants.Error.Message</span>
+                }
+            </div>
+            @if (Grants is null || Grants.Items.Count == 0)
+            {
+                <div class="resource-empty"><p>暂无授权记录。</p></div>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="table db-table">
+                        <thead>
+                            <tr>
+                                <th>数据库</th>
+                                <th>账号</th>
+                                <th>主机 / 访问范围</th>
+                                <th class="col-actions">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var grant in Grants.Items)
+                            {
+                                <tr>
+                                    <td>@grant.Db</td>
+                                    <td>@grant.Username</td>
+                                    <td class="muted small">@grant.Host</td>
+                                    <td class="col-actions">
+                                        <button type="button" class="btn btn-xs btn-danger" @onclick="() => RevokeAsync(grant)">取消授权</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            break;
+
+        case "connection":
+            <div class="table-wrap">
+                <table class="table detail-fields">
+                    <tbody>
+                        <tr><th scope="row">实例名称</th><td>@Instance.Instance</td></tr>
+                        <tr><th scope="row">引擎</th><td>@DatabaseEngines.DisplayName(Instance.Engine)（@DatabaseEngines.Key(Instance.Engine)）</td></tr>
+                        <tr><th scope="row">来源</th><td>@FromText</td></tr>
+                        <tr><th scope="row">版本</th><td>@(string.IsNullOrWhiteSpace(Instance.Version) ? "—" : Instance.Version)</td></tr>
+                        <tr><th scope="row">地址</th><td>@(string.IsNullOrWhiteSpace(Instance.Address) ? "—" : Instance.Address)</td></tr>
+                        <tr><th scope="row">1Panel 记录 id</th><td>@Instance.Id</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            @if (Status is not null)
+            {
+                <h3 class="detail-section">运行状态</h3>
+                @if (!Status.Supported)
+                {
+                    <div class="alert alert-warn">@Status.UnsupportedReason</div>
+                    @if (Status.Error is not null)
+                    {
+                        <p class="muted small">@Status.Error.Message</p>
+                    }
+                }
+                else if (Status.Error is not null)
+                {
+                    <div class="alert alert-warn">状态读取失败：@Status.Error.Message</div>
+                }
+                else
+                {
+                    <div class="stat-grid db-stat-grid">
+                        @StatCard("连接数", Status.ThreadsConnected)
+                        @StatCard("活跃线程", Status.ThreadsRunning)
+                        @StatCard("历史最大连接", Status.MaxUsedConnections)
+                        @StatCard("运行秒数", Status.Uptime)
+                        @StatCard("查询数", Status.Questions)
+                        @StatCard("慢查询", Status.SlowQueries)
+                        @StatCard("接收字节", Status.BytesReceived)
+                        @StatCard("发送字节", Status.BytesSent)
+                    </div>
+                }
+            }
+            break;
+
+        case "redis":
+            <h3 class="detail-section">Redis 状态</h3>
+            @if (Redis is null)
+            {
+                <p class="muted">暂无 Redis 信息。</p>
+            }
+            else if (!Redis.Supported)
+            {
+                <div class="alert alert-warn">@Redis.UnsupportedReason</div>
+                @if (Redis.Error is not null)
+                {
+                    <p class="muted small">@Redis.Error.Message</p>
+                }
+            }
+            else if (Redis.Error is not null)
+            {
+                <div class="alert alert-warn">Redis 读取失败：@Redis.Error.Message</div>
+            }
+            else
+            {
+                @if (Redis.Status is { } status)
+                {
+                    <div class="stat-grid db-stat-grid">
+                        @StatCard("端口", status.TcpPort)
+                        @StatCard("运行天数", status.UptimeInDays)
+                        @StatCard("连接客户端", status.ConnectedClients)
+                        @StatCard("已用内存", status.UsedMemory)
+                        @StatCard("内存峰值", status.UsedMemoryPeak)
+                        @StatCard("内存碎片率", status.MemFragmentationRatio)
+                        @StatCard("累计连接", status.TotalConnectionsReceived)
+                        @StatCard("QPS", status.InstantaneousOpsPerSec)
+                    </div>
+                }
+
+                <div class="instance-toolbar">
+                    <button type="button" class="btn btn-primary" @onclick="RedisConfigAsync">修改配置</button>
+                </div>
+
+                @if (Redis.Conf is { } conf)
+                {
+                    <div class="table-wrap">
+                        <table class="table detail-fields">
+                            <tbody>
+                                <tr><th scope="row">timeout</th><td>@Display(conf.Timeout)</td></tr>
+                                <tr><th scope="row">maxclients</th><td>@Display(conf.Maxclients)</td></tr>
+                                <tr><th scope="row">maxmemory</th><td>@Display(conf.Maxmemory)</td></tr>
+                                <tr><th scope="row">appendonly</th><td>@Display(conf.Appendonly)</td></tr>
+                                <tr><th scope="row">appendfsync</th><td>@Display(conf.Appendfsync)</td></tr>
+                                <tr><th scope="row">save</th><td>@Display(conf.Save)</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+            break;
+    }
+</div>
+
+@code {
+    private string _tab = "databases";
+
+    [Parameter, EditorRequired]
+    public DatabaseInstanceView Instance { get; set; } = null!;
+
+    [Parameter]
+    public DatabaseReadResult<DatabaseUserView>? Users { get; set; }
+
+    [Parameter]
+    public DatabaseReadResult<DatabaseGrantView>? Grants { get; set; }
+
+    [Parameter]
+    public DatabaseReadResult<DatabaseFormatView>? Formats { get; set; }
+
+    [Parameter]
+    public DatabaseStatusView? Status { get; set; }
+
+    [Parameter]
+    public DatabaseRedisView? Redis { get; set; }
+
+    [Parameter]
+    public bool InstanceLoading { get; set; }
+
+    [Parameter]
+    public string? InstanceError { get; set; }
+
+    [Parameter]
+    public string? PanelUrl { get; set; }
+
+    [Parameter]
+    public EventCallback OnRefresh { get; set; }
+
+    [Parameter]
+    public EventCallback<DatabaseInstanceView> OnCreateDatabase { get; set; }
+
+    [Parameter]
+    public EventCallback<DatabaseDbView> OnEditDescription { get; set; }
+
+    [Parameter]
+    public EventCallback<DatabaseDbView> OnDeleteDatabase { get; set; }
+
+    [Parameter]
+    public EventCallback<DatabaseDbView> OnShowDatabase { get; set; }
+
+    [Parameter]
+    public EventCallback OnCreateUser { get; set; }
+
+    [Parameter]
+    public EventCallback<DatabaseUserView> OnResetUserPassword { get; set; }
+
+    [Parameter]
+    public EventCallback<DatabaseUserView> OnDeleteUser { get; set; }
+
+    [Parameter]
+    public EventCallback OnGrant { get; set; }
+
+    [Parameter]
+    public EventCallback<DatabaseGrantView> OnRevoke { get; set; }
+
+    [Parameter]
+    public EventCallback OnRedisConfig { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // 切换实例/引擎时校正当前页签，避免停留在不存在的页签。
+        if (Instance.Engine != DatabaseEngine.MySql && _tab is "users" or "grants")
+        {
+            _tab = "databases";
+        }
+
+        if (Instance.Engine != DatabaseEngine.Redis && _tab == "redis")
+        {
+            _tab = "databases";
+        }
+    }
+
+    private string FromText => string.Equals(Instance.From, "local", StringComparison.OrdinalIgnoreCase)
+        ? "本地/应用实例"
+        : "远程实例";
+
+    private string FromClass => string.Equals(Instance.From, "local", StringComparison.OrdinalIgnoreCase)
+        ? "badge-ok"
+        : "badge-warn";
+
+    private string TabClass(string tab) => _tab == tab ? "is-active" : string.Empty;
+
+    private void SwitchTab(string tab) => _tab = tab;
+
+    private Task RefreshAsync() => OnRefresh.InvokeAsync();
+
+    private Task CreateDatabaseAsync() => OnCreateDatabase.InvokeAsync(Instance);
+
+    private Task EditDescriptionAsync(DatabaseDbView database) => OnEditDescription.InvokeAsync(database);
+
+    private Task DeleteDatabaseAsync(DatabaseDbView database) => OnDeleteDatabase.InvokeAsync(database);
+
+    private Task ShowDatabaseAsync(DatabaseDbView database) => OnShowDatabase.InvokeAsync(database);
+
+    private Task CreateUserAsync() => OnCreateUser.InvokeAsync();
+
+    private Task ResetPasswordAsync(DatabaseUserView user) => OnResetUserPassword.InvokeAsync(user);
+
+    private Task DeleteUserAsync(DatabaseUserView user) => OnDeleteUser.InvokeAsync(user);
+
+    private Task GrantAsync() => OnGrant.InvokeAsync();
+
+    private Task RevokeAsync(DatabaseGrantView grant) => OnRevoke.InvokeAsync(grant);
+
+    private Task RedisConfigAsync() => OnRedisConfig.InvokeAsync();
+
+    private string AuthorizedUsers(DatabaseDbView database)
+    {
+        if (Grants is null || Grants.Items.Count == 0)
+        {
+            return "—";
+        }
+
+        var users = Grants.Items
+            .Where(grant => string.Equals(grant.Db, database.Name, StringComparison.Ordinal))
+            .Select(grant => grant.Username + "@" + grant.Host)
+            .ToArray();
+        return users.Length == 0 ? "—" : string.Join("、", users);
+    }
+
+    private static string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value;
+
+    private static RenderFragment StatCard(string label, string? value) => builder =>
+    {
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", "stat-card");
+        builder.OpenElement(2, "div");
+        builder.AddAttribute(3, "class", "stat-value");
+        builder.AddContent(4, Display(value));
+        builder.CloseElement();
+        builder.OpenElement(5, "div");
+        builder.AddAttribute(6, "class", "stat-label");
+        builder.AddContent(7, label);
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+}

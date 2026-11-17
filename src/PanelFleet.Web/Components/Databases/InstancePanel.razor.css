@@ -1,0 +1,93 @@
+.instance-panel {
+    padding: 14px 16px;
+}
+
+.instance-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.instance-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 16px;
+}
+
+.db-tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    margin: 10px 0;
+}
+
+.db-tab {
+    border: none;
+    background: transparent;
+    padding: 7px 12px;
+    font-size: 14px;
+    color: var(--muted, #6b7280);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+}
+
+.db-tab:hover {
+    color: var(--text, #111827);
+}
+
+.db-tab.is-active {
+    color: var(--primary, #2563eb);
+    border-bottom-color: var(--primary, #2563eb);
+    font-weight: 600;
+}
+
+.instance-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 8px 0;
+}
+
+.db-table {
+    font-size: 13px;
+}
+
+.db-table .col-actions {
+    width: 1%;
+    white-space: nowrap;
+}
+
+.db-table .row-actions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.btn-xs {
+    padding: 2px 6px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.detail-section {
+    margin: 16px 0 8px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.db-stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.detail-fields th {
+    width: 170px;
+    white-space: nowrap;
+}

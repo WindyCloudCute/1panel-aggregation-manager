@@ -1,0 +1,108 @@
+@using PanelFleet.Application.Operations
+
+@if (Preview is not null)
+{
+    @* 遮罩使用 position:fixed：全局 .page-enter 只做 opacity 动画（不含 transform），
+       不会创建 containing block，因此这里始终相对视口居中。 *@
+    <div class="modal-backdrop" @onclick="CancelAsync">
+        <div class="modal operation-modal" @onclick:stopPropagation="true">
+            <div class="operation-modal-header">
+                <h2>@Preview.Title</h2>
+                <RiskBadge Risk="Preview.Risk" />
+            </div>
+
+            <div class="operation-modal-body">
+                <p class="operation-summary">@Preview.Summary</p>
+
+                <div class="operation-targets">
+                    <div class="muted small">目标节点（@Preview.Targets.Count）</div>
+                    <ul>
+                        @foreach (var target in Preview.Targets)
+                        {
+                            <li>@target.NodeName</li>
+                        }
+                    </ul>
+                </div>
+
+                @if (Preview.Warnings.Count > 0)
+                {
+                    <div class="alert alert-warn">
+                        <ul>
+                            @foreach (var warning in Preview.Warnings)
+                            {
+                                <li>@warning</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (Preview.Risk >= OperationRisk.High)
+                {
+                    <div class="alert alert-error operation-irreversible">
+                        此操作不会自动回滚，请确认目标与影响后再执行。
+                    </div>
+                }
+
+                @if (Preview.RequiresTypedConfirmation)
+                {
+                    <label class="operation-confirm-field">
+                        <span>请输入 <code>@Preview.ConfirmText</code> 以确认</span>
+                        <input @bind="_typedText"
+                               @bind:event="oninput"
+                               disabled="@Busy"
+                               autocomplete="off"
+                               spellcheck="false" />
+                    </label>
+                }
+                else
+                {
+                    <p class="muted small">确认后将立即执行该操作。</p>
+                }
+            </div>
+
+            <div class="operation-modal-footer">
+                <button type="button" class="btn" @onclick="CancelAsync" disabled="@Busy">取消</button>
+                <button type="button" class="btn btn-danger" @onclick="ConfirmAsync" disabled="@(!CanConfirm)">
+                    @(Busy ? "执行中…" : "确认执行")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string? _typedText;
+    private Guid? _lastToken;
+
+    [Parameter]
+    public OperationPreview? Preview { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> OnConfirm { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private bool CanConfirm =>
+        !Busy
+        && Preview is not null
+        && (!Preview.RequiresTypedConfirmation
+            || string.Equals((_typedText ?? string.Empty).Trim(), Preview.ConfirmText, StringComparison.Ordinal));
+
+    protected override void OnParametersSet()
+    {
+        // 重新预览（Token 变化）时清空已输入文本，避免沿用旧确认值。
+        if (Preview is not null && _lastToken != Preview.TokenId)
+        {
+            _lastToken = Preview.TokenId;
+            _typedText = null;
+        }
+    }
+
+    private Task ConfirmAsync() => CanConfirm ? OnConfirm.InvokeAsync(_typedText?.Trim()) : Task.CompletedTask;
+
+    private Task CancelAsync() => Busy ? Task.CompletedTask : OnCancel.InvokeAsync();
+}

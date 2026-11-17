@@ -1,0 +1,257 @@
+@using System.Globalization
+@using PanelFleet.Application.Containers
+
+<div class="drawer-backdrop" @onclick="CloseAsync"></div>
+
+<aside class="detail-drawer container-detail-drawer" role="dialog" aria-label="容器详情">
+    <div class="drawer-header">
+        <div class="drawer-title">
+            <h2>@Row.NodeName / @Row.Name</h2>
+            <div class="muted small">
+                <ContainerStatusBadge State="@Row.State" />
+                <span class="mono">@Row.Image</span>
+                @if (Detail is not null)
+                {
+                    <span> · 获取于 @Detail.FetchedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+                }
+            </div>
+        </div>
+        <button type="button" class="drawer-close" title="关闭" aria-label="关闭" @onclick="CloseAsync"><ContainerIcon Name="close" Size="18" /></button>
+    </div>
+
+    <div class="drawer-body">
+        @if (Loading)
+        {
+            <div class="detail-skeleton">
+                <div class="stat-grid container-stat-grid">
+                    @for (var index = 0; index < 8; index++)
+                    {
+                        <div class="stat-card">
+                            <div class="pf-skeleton-line"></div>
+                            <div class="pf-skeleton-line is-short"></div>
+                        </div>
+                    }
+                </div>
+                <div class="pf-skeleton-lines">
+                    @for (var index = 0; index < 6; index++)
+                    {
+                        <div class="pf-skeleton-line" style="width: @(index % 3 == 0 ? "58%" : "88%")"></div>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            @if (Error is not null)
+            {
+                <div class="alert alert-error">@Error</div>
+                <div class="actions">
+                    <button type="button" class="btn" @onclick="RetryAsync">重试</button>
+                </div>
+            }
+
+            @if (Detail?.Stats is { } stats)
+            {
+                <h3 class="detail-section">实时资源</h3>
+                @if (stats.Error is not null)
+                {
+                    <div class="alert alert-warn">统计读取失败：@stats.Error.Message</div>
+                }
+                else
+                {
+                    <div class="stat-grid container-stat-grid">
+                        @StatCard("CPU", stats.CpuPercent.ToString("0.00", CultureInfo.InvariantCulture) + "%")
+                        @StatCard("内存", FormatBytes(stats.MemoryUsageMebibytes * 1024 * 1024))
+                        @StatCard("读 IO", FormatBytes(stats.IoRead))
+                        @StatCard("写 IO", FormatBytes(stats.IoWrite))
+                        @StatCard("网络 RX", FormatBytes(stats.NetworkRx))
+                        @StatCard("网络 TX", FormatBytes(stats.NetworkTx))
+                        @StatCard("容器层大小", stats.SizeRw is { } sizeRw ? FormatBytes(sizeRw) : "—")
+                        @StatCard("镜像层大小", stats.SizeRootFs is { } sizeRoot ? FormatBytes(sizeRoot) : "—")
+                    </div>
+                }
+            }
+
+            @if (Detail is not null && Detail.Fields.Count > 0)
+            {
+                <h3 class="detail-section">inspect 详情</h3>
+                <table class="table detail-fields">
+                    <tbody>
+                        @foreach (var field in Fields)
+                        {
+                            <tr>
+                                <th scope="row">@field.Key</th>
+                                <td class="@(field.Value.Contains('\n') ? "pre" : string.Empty)">@field.Value</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else if (Error is null && !Loading)
+            {
+                <p class="muted">暂无详情字段。</p>
+            }
+        }
+    </div>
+
+    <div class="drawer-footer">
+        <button type="button" class="btn" @onclick="LogsAsync">查看日志</button>
+        @if (ContainerStates.IsRunning(Row.State))
+        {
+            <button type="button" class="btn btn-primary" @onclick="TerminalAsync">打开终端</button>
+            <a class="btn" href="@TerminalUrl" target="_blank" rel="noopener noreferrer">在新页面打开</a>
+        }
+        else
+        {
+            <span class="muted small">容器未运行，终端不可用。</span>
+        }
+        @if (!string.IsNullOrEmpty(PanelUrl))
+        {
+            <a class="btn" href="@PanelUrl" target="_blank" rel="noopener noreferrer">在 1Panel 中打开</a>
+        }
+        <button type="button" class="btn" @onclick="CloseAsync">关闭</button>
+    </div>
+</aside>
+
+@code {
+    private static readonly string[] FieldOrder =
+    [
+        "state", "image", "imageId", "created", "startedAt", "finishedAt", "exitCode", "restartCount",
+        "restartPolicy", "networkMode", "hostname", "workingDir", "user", "cmd", "entrypoint",
+        "composeProject", "composeService", "composeWorkdir", "mounts", "networks", "ports", "volumes",
+        "env", "envCount", "privileged", "tty", "openStdin", "logDriver", "id", "name"
+    ];
+
+    private static readonly Dictionary<string, string> FieldLabels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"] = "容器 ID",
+        ["name"] = "名称",
+        ["image"] = "镜像",
+        ["imageId"] = "镜像 ID",
+        ["state"] = "状态",
+        ["created"] = "创建时间",
+        ["startedAt"] = "启动时间",
+        ["finishedAt"] = "停止时间",
+        ["exitCode"] = "退出码",
+        ["restartCount"] = "重启次数",
+        ["restartPolicy"] = "重启策略",
+        ["networkMode"] = "网络模式",
+        ["hostname"] = "主机名",
+        ["workingDir"] = "工作目录",
+        ["user"] = "运行用户",
+        ["cmd"] = "启动命令",
+        ["entrypoint"] = "Entrypoint",
+        ["composeProject"] = "Compose 项目",
+        ["composeService"] = "Compose 服务",
+        ["composeWorkdir"] = "Compose 目录",
+        ["mounts"] = "挂载",
+        ["networks"] = "网络",
+        ["ports"] = "端口",
+        ["volumes"] = "卷",
+        ["env"] = "环境变量（敏感值已脱敏）",
+        ["envCount"] = "环境变量数量",
+        ["privileged"] = "特权模式",
+        ["tty"] = "TTY",
+        ["openStdin"] = "标准输入",
+        ["logDriver"] = "日志驱动"
+    };
+
+    [Parameter, EditorRequired]
+    public ContainerRow Row { get; set; } = null!;
+
+    [Parameter]
+    public ContainerDetail? Detail { get; set; }
+
+    [Parameter]
+    public bool Loading { get; set; }
+
+    [Parameter]
+    public string? Error { get; set; }
+
+    /// <summary>「在 1Panel 中打开」的容器页地址；节点信息缺失时为 null。</summary>
+    [Parameter]
+    public string? PanelUrl { get; set; }
+
+    [Parameter]
+    public EventCallback OnRetry { get; set; }
+
+    [Parameter]
+    public EventCallback<ContainerRow> OnLogs { get; set; }
+
+    /// <summary>点击「打开终端」时由父组件打开终端抽屉。</summary>
+    [Parameter]
+    public EventCallback<ContainerRow> OnTerminal { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private string TerminalUrl =>
+        "/terminal?nodeId=" + Row.NodeId.ToString("N") + "&container=" + Uri.EscapeDataString(Row.Name);
+
+    private IReadOnlyList<KeyValuePair<string, string>> Fields
+    {
+        get
+        {
+            if (Detail is null || Detail.Fields.Count == 0)
+            {
+                return [];
+            }
+
+            var positions = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var index = 0; index < FieldOrder.Length; index++)
+            {
+                positions[FieldOrder[index]] = index;
+            }
+
+            return Detail.Fields
+                .OrderBy(pair => positions.TryGetValue(pair.Key, out var position) ? position : int.MaxValue)
+                .ThenBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => new KeyValuePair<string, string>(
+                    FieldLabels.TryGetValue(pair.Key, out var label) ? label : pair.Key,
+                    string.IsNullOrWhiteSpace(pair.Value) ? "—" : pair.Value))
+                .ToArray();
+        }
+    }
+
+    private static string FormatBytes(double bytes)
+    {
+        if (bytes <= 0)
+        {
+            return "0";
+        }
+
+        string[] units = ["B", "KiB", "MiB", "GiB", "TiB"];
+        var index = 0;
+        var value = bytes;
+        while (value >= 1024 && index < units.Length - 1)
+        {
+            value /= 1024;
+            index++;
+        }
+
+        return value.ToString(value >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture) + " " + units[index];
+    }
+
+    private static RenderFragment StatCard(string label, string value) => builder =>
+    {
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", "stat-card");
+        builder.OpenElement(2, "div");
+        builder.AddAttribute(3, "class", "stat-value");
+        builder.AddContent(4, value);
+        builder.CloseElement();
+        builder.OpenElement(5, "div");
+        builder.AddAttribute(6, "class", "stat-label");
+        builder.AddContent(7, label);
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+
+    private Task RetryAsync() => OnRetry.InvokeAsync();
+
+    private Task LogsAsync() => OnLogs.InvokeAsync(Row);
+
+    private Task TerminalAsync() => OnTerminal.InvokeAsync(Row);
+}

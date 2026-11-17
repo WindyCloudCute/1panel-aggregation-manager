@@ -1,0 +1,273 @@
+@using PanelFleet.Application.Containers
+@inject IComposeContentService ComposeContentService
+
+@* Compose 新建/编辑对话框：YAML 只在编辑器与表单内流转，不写入审计或日志。 *@
+<div class="modal-backdrop" @onclick="RequestCloseAsync">
+    <div class="modal compose-editor-modal" @onclick:stopPropagation="true">
+        <div class="compose-editor-head">
+            <div>
+                <h2>@(IsEdit ? "编辑 Compose 项目" : "新建 Compose 项目")</h2>
+                <p class="muted small compose-editor-sub">
+                    @if (IsEdit)
+                    {
+                        <span>@Project!.Name · @NodeName</span>
+                    }
+                    else
+                    {
+                        <span>节点：@NodeName</span>
+                    }
+                </p>
+            </div>
+            <span class="badge badge-unknown">@(IsEdit ? "compose.update" : "compose.create")</span>
+        </div>
+
+        @if (_loading)
+        {
+            <div class="compose-editor-loading" aria-busy="true">
+                <div class="compose-skeleton-line"></div>
+                <div class="compose-skeleton-line"></div>
+                <div class="compose-skeleton-line is-short"></div>
+                <p class="muted small">正在读取当前 YAML 内容…</p>
+            </div>
+        }
+        else
+        {
+            @if (!string.IsNullOrWhiteSpace(_loadWarning))
+            {
+                <div class="alert alert-warn compose-load-warning">@_loadWarning</div>
+            }
+
+            <div class="form-row">
+                <label class="form-label" for="compose-name">项目名 <span class="required">*</span></label>
+                @if (IsEdit)
+                {
+                    <input id="compose-name" value="@Project!.Name" disabled />
+                    <span class="muted small">项目名创建后不可修改；路径：<code>@PathText</code></span>
+                }
+                else
+                {
+                    <input id="compose-name"
+                           @bind="_name"
+                           @bind:event="oninput"
+                           disabled="@Busy"
+                           maxlength="256"
+                           autocomplete="off"
+                           spellcheck="false"
+                           placeholder="例如 webstack" />
+                    <span class="muted small">以小写字母或数字开头，只能包含小写字母、数字、下划线、连字符（1-256 位）。</span>
+                }
+            </div>
+
+            <div class="form-row">
+                <label class="form-label" for="compose-content">Compose 文件（YAML） <span class="required">*</span></label>
+                <textarea id="compose-content"
+                          class="compose-yaml mono"
+                          rows="14"
+                          @bind="_content"
+                          @bind:event="oninput"
+                          disabled="@Busy"
+                          spellcheck="false"
+                          placeholder="services:
+  app:
+    image: nginx:alpine"></textarea>
+                <div class="compose-editor-meta">
+                    <span class="muted small">@ContentCountText</span>
+                    @if (_content.Length > MaxContentChars)
+                    {
+                        <span class="compose-editor-error">超过 256 KiB 上限</span>
+                    }
+                </div>
+            </div>
+
+            <div class="form-row">
+                <label class="form-label" for="compose-env">.env（可选）</label>
+                <textarea id="compose-env"
+                          class="compose-yaml compose-env mono"
+                          rows="4"
+                          @bind="_env"
+                          @bind:event="oninput"
+                          disabled="@Busy"
+                          spellcheck="false"
+                          placeholder="KEY=value"></textarea>
+                <span class="muted small">内容会写入项目目录的 .env，仅随本次操作提交，不会记录到审计。</span>
+            </div>
+
+            <label class="checkbox-inline compose-editor-check">
+                <input type="checkbox" @bind="_forcePull" disabled="@Busy" />
+                <span>创建/更新前拉取最新镜像（forcePull）</span>
+            </label>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="alert alert-error">@_error</div>
+            }
+
+            @if (_showDiscard)
+            {
+                <div class="alert alert-warn compose-discard">
+                    <span>有未保存的修改，确定放弃并关闭？</span>
+                    <div class="compose-discard-actions">
+                        <button type="button" class="btn btn-xs" @onclick="ContinueEditing">继续编辑</button>
+                        <button type="button" class="btn btn-xs btn-danger" @onclick="DiscardAndClose">放弃修改</button>
+                    </div>
+                </div>
+            }
+
+            <div class="modal-actions">
+                <button type="button" class="btn" @onclick="RequestCloseAsync" disabled="@Busy">取消</button>
+                <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@(!CanSubmit)">
+                    @(IsEdit ? "保存（预览确认后执行）" : "创建（预览确认后执行）")
+                </button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    public const int MaxContentChars = 256 * 1024;
+
+    private static readonly System.Text.RegularExpressions.Regex NamePattern =
+        new("^[a-z0-9][a-z0-9_-]{0,255}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private bool _loading;
+    private bool _initialized;
+    private string _name = string.Empty;
+    private string _content = string.Empty;
+    private string _env = string.Empty;
+    private bool _forcePull;
+    private string? _loadWarning;
+    private string? _error;
+    private bool _showDiscard;
+
+    private string _baselineName = string.Empty;
+    private string _baselineContent = string.Empty;
+    private string _baselineEnv = string.Empty;
+    private bool _baselineForcePull;
+
+    [Parameter]
+    public ComposeProjectRow? Project { get; set; }
+
+    [Parameter]
+    public string? NodeName { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<ComposeEditorResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private bool IsEdit => Project is not null;
+
+    private string PathText =>
+        string.IsNullOrWhiteSpace(Project?.ConfigFile)
+            ? (string.IsNullOrWhiteSpace(Project?.Path) ? "—" : Project!.Path)
+            : Project!.ConfigFile!;
+
+    private bool Dirty =>
+        (!string.Equals(_name, _baselineName, StringComparison.Ordinal)
+         || !string.Equals(_content, _baselineContent, StringComparison.Ordinal)
+         || !string.Equals(_env, _baselineEnv, StringComparison.Ordinal)
+         || _forcePull != _baselineForcePull);
+
+    private bool CanSubmit =>
+        !Busy
+        && !_loading
+        && _name.Trim().Length > 0
+        && NamePattern.IsMatch(_name.Trim())
+        && _content.Trim().Length > 0
+        && _content.Length <= MaxContentChars
+        && _env.Length <= MaxContentChars
+        && !_content.Contains('\0')
+        && !_env.Contains('\0');
+
+    private string ContentCountText => $"{_content.Length:N0} / {MaxContentChars:N0} 字符";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Project is not null)
+        {
+            _name = Project.Name;
+            _loading = true;
+            try
+            {
+                var result = await ComposeContentService.GetComposeContentAsync(
+                    Project.NodeId, Project.Name, CancellationToken.None);
+                _content = result.Content;
+                if (result.Truncated)
+                {
+                    _loadWarning = "文件超过 1 MiB，仅加载前 1 MiB；直接保存会截断原文件，请谨慎操作。";
+                }
+            }
+            catch (ContainerComposeNotFoundException)
+            {
+                _loadWarning = "无法自动读取 YAML：1Panel 未找到该项目，请粘贴当前内容后再保存。";
+            }
+            catch (ComposeContentUnsupportedException exception)
+            {
+                _loadWarning = "无法自动读取 YAML：" + exception.Message + " 请粘贴当前内容后再保存。";
+            }
+            catch (Exception exception)
+            {
+                _loadWarning = "无法自动读取 YAML，请粘贴当前内容（" + exception.Message + "）。";
+            }
+            finally
+            {
+                _loading = false;
+            }
+        }
+
+        _baselineName = _name;
+        _baselineContent = _content;
+        _baselineEnv = _env;
+        _baselineForcePull = _forcePull;
+        _initialized = true;
+    }
+
+    private Task RequestCloseAsync()
+    {
+        if (Busy)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (!_initialized || !Dirty)
+        {
+            return OnCancel.InvokeAsync();
+        }
+
+        _showDiscard = true;
+        return Task.CompletedTask;
+    }
+
+    private void ContinueEditing() => _showDiscard = false;
+
+    private Task DiscardAndClose()
+    {
+        _showDiscard = false;
+        return OnCancel.InvokeAsync();
+    }
+
+    private Task SubmitAsync()
+    {
+        _error = null;
+        if (!CanSubmit)
+        {
+            _error = IsEdit
+                ? "请填写有效的 YAML 内容（不能为空、超过 256 KiB 或包含二进制字符）。"
+                : "请填写合法的项目名（小写字母/数字开头，仅小写字母、数字、_、-）与 YAML 内容（不能超过 256 KiB）。";
+            return Task.CompletedTask;
+        }
+
+        var name = IsEdit ? Project!.Name : _name.Trim();
+        return OnSubmit.InvokeAsync(new ComposeEditorResult(
+            name,
+            _content,
+            string.IsNullOrWhiteSpace(_env) ? null : _env,
+            _forcePull));
+    }
+
+    public sealed record ComposeEditorResult(string Name, string Content, string? Env, bool ForcePull);
+}

@@ -1,0 +1,137 @@
+@using PanelFleet.Application.Cronjobs
+
+<div class="cronjob-table-wrap">
+    <table class="cronjob-table">
+        <thead>
+            <tr>
+                <th class="col-select">
+                    <input type="checkbox"
+                           checked="@AllSelected"
+                           disabled="@(Rows.Count == 0)"
+                           @onchange="OnSelectAllChanged" />
+                </th>
+                <th>任务</th>
+                <th>节点</th>
+                <th>类型</th>
+                <th>分组</th>
+                <th>周期</th>
+                <th>状态</th>
+                <th>最近记录</th>
+                <th class="col-actions">操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (Rows.Count == 0)
+            {
+                <tr>
+                    <td colspan="9" class="cronjob-empty">暂无计划任务。</td>
+                </tr>
+            }
+            else
+            {
+                @foreach (var row in Rows)
+                {
+                    var key = Key(row);
+                    var rowClass = SelectedKeys.Contains(key) ? "is-selected" : string.Empty;
+                    if (HighlightKey == key)
+                    {
+                        rowClass = string.IsNullOrEmpty(rowClass) ? "is-highlighted" : rowClass + " is-highlighted";
+                    }
+                    <tr class="@rowClass">
+                        <td class="col-select">
+                            <input type="checkbox"
+                                   checked="@SelectedKeys.Contains(key)"
+                                   @onchange="() => ToggleAsync(row)" />
+                        </td>
+                        <td>
+                            <div class="cronjob-name">@row.Name</div>
+                            <div class="cronjob-sub">#@row.Id</div>
+                        </td>
+                        <td>@row.NodeName</td>
+                        <td><CronjobTypeBadge Type="@row.Type" /></td>
+                        <td>@row.GroupName</td>
+                        <td>
+                            <div>@row.SpecText</div>
+                            @if (!string.IsNullOrWhiteSpace(row.Spec) && row.Spec != row.SpecText)
+                            {
+                                <div class="cronjob-sub">@row.Spec</div>
+                            }
+                        </td>
+                        <td>
+                            <CronjobStatusBadge Status="@row.Status" />
+                            @if (row.IsExecuting)
+                            {
+                                <span class="cronjob-running">执行中</span>
+                            }
+                        </td>
+                        <td>
+                            @if (string.IsNullOrWhiteSpace(row.LastRecordStatus))
+                            {
+                                <span class="cronjob-sub">暂无记录</span>
+                            }
+                            else
+                            {
+                                <div>@CronjobRecordStatus.Label(row.LastRecordStatus)</div>
+                                <div class="cronjob-sub">@row.LastRecordTime</div>
+                            }
+                        </td>
+                        <td class="col-actions">
+                            <div class="cronjob-row-actions">
+                                <button type="button" class="btn btn-xs" @onclick="() => OnEdit.InvokeAsync(row)">编辑</button>
+                                <button type="button" class="btn btn-xs" @onclick="() => OnToggleStatus.InvokeAsync(row)">
+                                    @(CronjobStatus.IsEnable(row.Status) ? "停用" : "启用")
+                                </button>
+                                <button type="button" class="btn btn-xs" @onclick="() => OnRun.InvokeAsync(row)">立即执行</button>
+                                <button type="button" class="btn btn-xs" @onclick="() => OnRecords.InvokeAsync(row)">记录</button>
+                                <button type="button" class="btn btn-xs btn-danger" @onclick="() => OnDelete.InvokeAsync(row)">删除</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    /// <summary>构建行唯一键（节点 + 任务 id）。</summary>
+    public static string Key(CronjobRow row) => row.NodeId.ToString("N") + ":" + row.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    [Parameter]
+    public IReadOnlyList<CronjobRow> Rows { get; set; } = [];
+
+    [Parameter]
+    public HashSet<string> SelectedKeys { get; set; } = [];
+
+    /// <summary>需要高亮的行键（节点 + 任务 id），用于树中定位任务。</summary>
+    [Parameter]
+    public string? HighlightKey { get; set; }
+
+    [Parameter]
+    public EventCallback<CronjobRow> OnToggle { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> OnSelectAll { get; set; }
+
+    [Parameter]
+    public EventCallback<CronjobRow> OnEdit { get; set; }
+
+    [Parameter]
+    public EventCallback<CronjobRow> OnToggleStatus { get; set; }
+
+    [Parameter]
+    public EventCallback<CronjobRow> OnRun { get; set; }
+
+    [Parameter]
+    public EventCallback<CronjobRow> OnDelete { get; set; }
+
+    [Parameter]
+    public EventCallback<CronjobRow> OnRecords { get; set; }
+
+    private bool AllSelected => Rows.Count > 0 && Rows.All(row => SelectedKeys.Contains(Key(row)));
+
+    private Task ToggleAsync(CronjobRow row) => OnToggle.InvokeAsync(row);
+
+    private Task OnSelectAllChanged(ChangeEventArgs args) =>
+        OnSelectAll.InvokeAsync(args.Value is true);
+}

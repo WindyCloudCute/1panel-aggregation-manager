@@ -1,0 +1,72 @@
+.node-step {
+    margin-bottom: 14px;
+    padding: 12px 14px;
+    background: var(--bg);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md, 12px);
+    transition: border-color var(--dur-fast, 120ms) var(--ease-out, ease);
+}
+
+.node-step.is-locked {
+    border-style: solid;
+    background: var(--primary-soft, var(--bg));
+}
+
+.node-step-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.node-step-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    color: var(--primary);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 8px);
+}
+
+.node-step-copy {
+    min-width: 0;
+}
+
+.node-step-title {
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.node-step-copy p {
+    margin: 2px 0 0;
+    line-height: 1.5;
+}
+
+.node-step-locked {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 8px);
+}
+
+.node-step-locked .node-step-name {
+    font-weight: 600;
+}
+
+.node-step-lock {
+    display: inline-flex;
+    align-items: center;
+    color: var(--muted);
+}
+
+.node-step .form-row {
+    margin-top: 10px;
+}

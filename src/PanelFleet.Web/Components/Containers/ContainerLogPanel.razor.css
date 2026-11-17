@@ -1,0 +1,179 @@
+/* 日志抽屉：高度固定在视口内，日志内容区独立滚动；支持全屏与实时刷新状态。 */
+
+.log-drawer {
+    width: min(960px, 98vw);
+    height: 100dvh;
+    max-height: 100dvh;
+}
+
+.log-drawer.is-fullscreen {
+    /* 用 inset 而不是 100vw：100vw 含滚动条宽度，会让抽屉向左溢出。 */
+    inset: 0;
+    width: auto;
+    max-width: none;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-left: 0;
+    border-radius: 0;
+}
+
+.log-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+}
+
+.log-head-action.is-on,
+.log-toggle.is-on {
+    background: var(--primary-soft);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+}
+
+.log-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.log-toolbar select {
+    min-width: 110px;
+}
+
+.log-toolbar .checkbox {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.log-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.log-refresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.log-live-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 6px;
+    color: var(--ok);
+    font-weight: 600;
+}
+
+.log-live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--ok);
+    animation: log-live-pulse 1.6s var(--ease-out, ease-in-out) infinite;
+}
+
+.log-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--primary-soft);
+    border-top-color: var(--primary);
+    border-radius: 999px;
+    animation: log-spin 0.8s linear infinite;
+}
+
+.log-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.log-output {
+    flex: 1;
+    margin: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 12px 14px;
+    background: var(--text);
+    color: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.log-output.log-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    background: var(--panel);
+}
+
+/* 每行一个块级元素，配合 column-reverse 让最新日志固定在可视区底部。 */
+.log-lines.is-follow {
+    display: flex;
+    flex-direction: column-reverse;
+}
+
+.log-line {
+    flex: none;
+    min-height: 1.55em;
+}
+
+.log-skeleton {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 16px;
+    min-height: 320px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
+    background: var(--panel);
+}
+
+.log-skeleton-line {
+    height: 10px;
+    border-radius: var(--radius-sm, 8px);
+    background: var(--border);
+    opacity: 0.55;
+    animation: log-pulse 1.4s var(--ease-out, ease-in-out) infinite;
+}
+
+@keyframes log-spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes log-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.8; }
+}
+
+@keyframes log-live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .log-spinner,
+    .log-skeleton-line,
+    .log-live-dot {
+        animation: none;
+    }
+}
+
+/* 日志输出区可获得焦点（点击后可继续用 Esc 退出全屏/关闭抽屉）。 */
+.log-output:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+}

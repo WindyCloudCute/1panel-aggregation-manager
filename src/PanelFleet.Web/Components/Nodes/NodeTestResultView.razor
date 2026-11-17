@@ -1,0 +1,32 @@
+@if (Result is null)
+{
+    return;
+}
+
+<div class="test-result @(Result.Authorized ? "ok" : "fail")">
+    <div class="test-line">
+        <strong>@(Result.Authorized ? "连接成功" : "连接失败")</strong>
+        <span class="muted">延迟 @(Result.LatencyMs) ms</span>
+        @if (!string.IsNullOrWhiteSpace(Result.PanelVersion))
+        {
+            <span class="muted">版本 @Result.PanelVersion</span>
+        }
+        @if (Result.DetectedAuthMode is { } mode)
+        {
+            <span class="muted">鉴权 @mode</span>
+        }
+        @if (Result.ClockOffsetSeconds is { } offset && Math.Abs(offset) >= 5)
+        {
+            <span class="muted">时钟偏差 @offset.ToString("0.#") 秒</span>
+        }
+    </div>
+    @if (!string.IsNullOrWhiteSpace(Result.ErrorMessage))
+    {
+        <div class="test-error">@Result.ErrorMessage</div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public NodeTestResult? Result { get; set; }
+}

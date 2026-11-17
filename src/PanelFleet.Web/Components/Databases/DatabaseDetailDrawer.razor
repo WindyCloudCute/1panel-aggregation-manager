@@ -1,0 +1,82 @@
+@using PanelFleet.Application.Databases
+
+<div class="drawer-backdrop" @onclick="CloseAsync"></div>
+
+<aside class="detail-drawer db-detail-drawer" role="dialog" aria-label="数据库详情">
+    <div class="drawer-header">
+        <div class="drawer-title">
+            <h2>@Database.NodeName / @Database.Instance / @Database.Name</h2>
+            <div class="muted small">
+                <span class="badge badge-unknown">@DatabaseEngines.DisplayName(Database.Engine)</span>
+                <span>记录 id @Database.Id</span>
+            </div>
+        </div>
+        <button type="button" class="drawer-close" title="关闭" @onclick="CloseAsync">×</button>
+    </div>
+
+    <div class="drawer-body">
+        <table class="table detail-fields">
+            <tbody>
+                <tr><th scope="row">数据库名称</th><td>@Database.Name</td></tr>
+                <tr><th scope="row">所属实例</th><td>@Database.Instance</td></tr>
+                <tr><th scope="row">节点</th><td>@Database.NodeName</td></tr>
+                <tr><th scope="row">来源</th><td>@(string.IsNullOrWhiteSpace(Database.From) ? "—" : Database.From)</td></tr>
+                <tr><th scope="row">字符集</th><td>@(string.IsNullOrWhiteSpace(Database.Format) ? "—" : Database.Format)</td></tr>
+                <tr><th scope="row">排序规则</th><td>@(string.IsNullOrWhiteSpace(Database.Collation) ? "—" : Database.Collation)</td></tr>
+                <tr><th scope="row">超级用户</th><td>@(Database.SuperUser ? "是" : "否")</td></tr>
+                <tr><th scope="row">描述</th><td>@(string.IsNullOrWhiteSpace(Database.Description) ? "—" : Database.Description)</td></tr>
+                <tr><th scope="row">创建时间</th><td>@(Database.CreatedAt is { } created ? created.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "—")</td></tr>
+                <tr>
+                    <th scope="row">授权账号</th>
+                    <td>
+                        @if (DatabaseGrants.Count == 0)
+                        {
+                            <span class="muted">—</span>
+                        }
+                        else
+                        {
+                            @foreach (var grant in DatabaseGrants)
+                            {
+                                <div>@grant.Username（@grant.Host）</div>
+                            }
+                        }
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="drawer-footer">
+        <button type="button" class="btn" @onclick="EditAsync">编辑描述</button>
+        <button type="button" class="btn btn-danger" @onclick="DeleteAsync">删除数据库</button>
+        <button type="button" class="btn" @onclick="CloseAsync">关闭</button>
+    </div>
+</aside>
+
+@code {
+    private IReadOnlyList<DatabaseGrantView> DatabaseGrants =>
+        Grants
+            .Where(grant => string.Equals(grant.Db, Database.Name, StringComparison.Ordinal))
+            .ToArray();
+
+    [Parameter, EditorRequired]
+    public DatabaseDbView Database { get; set; } = null!;
+
+    [Parameter]
+    public IReadOnlyList<DatabaseGrantView> Grants { get; set; } = [];
+
+    [Parameter]
+    public EventCallback<DatabaseDbView> OnEditDescription { get; set; }
+
+    [Parameter]
+    public EventCallback<DatabaseDbView> OnDelete { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+
+    private Task EditAsync() => OnEditDescription.InvokeAsync(Database);
+
+    private Task DeleteAsync() => OnDelete.InvokeAsync(Database);
+}

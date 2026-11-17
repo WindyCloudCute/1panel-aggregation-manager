@@ -1,0 +1,146 @@
+@using System.Globalization
+@using PanelFleet.Application.Websites
+
+<div class="modal-backdrop" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="modal website-modal" @onclick:stopPropagation="true">
+        <h2>编辑网站</h2>
+        @if (Detail is null)
+        {
+            <p class="muted">正在加载网站信息…</p>
+        }
+        else
+        {
+            <div class="form-row">
+                <label class="form-label">主域名 <span class="required">*</span></label>
+                <input @bind="_primaryDomain" @bind:event="oninput" maxlength="253" disabled="@Busy" />
+                <span class="muted small">修改主域名会影响访问地址与证书域名匹配。</span>
+            </div>
+            <div class="form-row">
+                <label class="form-label">备注</label>
+                <input @bind="_remark" maxlength="128" disabled="@Busy" />
+            </div>
+            <div class="form-row">
+                <label class="form-label">分组</label>
+                <select @bind="_groupId" disabled="@Busy">
+                    @foreach (var group in Groups)
+                    {
+                        <option value="@group.Id">@group.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="form-row">
+                <label class="form-label">到期日期</label>
+                <input type="date" @bind="_expireDate" disabled="@Busy" />
+                <label class="checkbox-inline">
+                    <input type="checkbox" @bind="_neverExpire" disabled="@Busy" />
+                    <span>永久有效（9999-12-31）</span>
+                </label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline">
+                    <input type="checkbox" @bind="_favorite" disabled="@Busy" />
+                    <span>收藏（列表置顶）</span>
+                </label>
+            </div>
+            <div class="form-row checkbox-row">
+                <label class="checkbox-inline">
+                    <input type="checkbox" @bind="_ipv6" disabled="@Busy" />
+                    <span>启用 IPv6</span>
+                </label>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="alert alert-error">@_error</div>
+            }
+            <div class="modal-actions">
+                <button type="button" class="btn" @onclick="() => OnCancel.InvokeAsync()" disabled="@Busy">取消</button>
+                <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@Busy">
+                    @(Busy ? "处理中…" : "保存（预览确认后执行）")
+                </button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private string _primaryDomain = string.Empty;
+    private string? _remark;
+    private long _groupId;
+    private DateTime? _expireDate;
+    private bool _neverExpire;
+    private bool _favorite;
+    private bool _ipv6;
+    private string? _error;
+    private long _loadedId;
+
+    [Parameter]
+    public WebsiteDetail? Detail { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<WebsiteGroupInfo> Groups { get; set; } = [];
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<WebsiteEditResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (Detail is null || Detail.Id == _loadedId)
+        {
+            return;
+        }
+
+        _loadedId = Detail.Id;
+        _primaryDomain = Detail.PrimaryDomain;
+        _remark = Detail.Remark;
+        _groupId = Detail.GroupId > 0 ? Detail.GroupId : Groups.FirstOrDefault()?.Id ?? 0;
+        _favorite = Detail.Favorite;
+        _ipv6 = Detail.IPv6;
+        _error = null;
+
+        if (DateTimeOffset.TryParse(Detail.ExpireDate, out var expire) && expire.Year < 9999)
+        {
+            _expireDate = expire.LocalDateTime.Date;
+            _neverExpire = false;
+        }
+        else
+        {
+            _expireDate = null;
+            _neverExpire = true;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (Detail is null)
+        {
+            return;
+        }
+
+        var domain = (_primaryDomain ?? string.Empty).Trim();
+        if (domain.Length == 0)
+        {
+            _error = "请填写主域名。";
+            return;
+        }
+
+        var expire = _neverExpire || _expireDate is null
+            ? "9999-12-31"
+            : _expireDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        await OnSubmit.InvokeAsync(new WebsiteEditResult(
+            Detail.Id,
+            domain,
+            string.IsNullOrWhiteSpace(_remark) ? null : _remark.Trim(),
+            _groupId,
+            expire,
+            _favorite,
+            _ipv6));
+    }
+}

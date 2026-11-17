@@ -1,0 +1,194 @@
+@using Microsoft.JSInterop
+@using PanelFleet.Application.Terminal
+@inject INodeService NodeService
+@inject TerminalOptions Options
+
+@if (Visible)
+{
+    <div class="terminal-drawer-backdrop @(_fullscreen ? "is-fullscreen" : null)"
+         @onclick="RequestCloseAsync"
+         @onkeydown="HandleKeyDown">
+        <section class="terminal-drawer @(_fullscreen ? "is-fullscreen" : null)"
+                 role="dialog"
+                 aria-modal="true"
+                 aria-labelledby="@TitleId"
+                 tabindex="-1"
+                 @onclick:stopPropagation="true">
+            <header class="terminal-drawer-head">
+                <div class="terminal-drawer-heading">
+                    <span class="terminal-drawer-eyebrow">终端会话</span>
+                    <h2 class="terminal-drawer-title" id="@TitleId">@TitleText</h2>
+                    <div class="terminal-drawer-meta">
+                        <span class="terminal-drawer-badge @(IsContainer ? "is-container" : "is-host")">@ModeText</span>
+                        @if (!string.IsNullOrWhiteSpace(ContainerName))
+                        {
+                            <span class="terminal-drawer-container" title="@ContainerName">@ContainerName</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="terminal-drawer-actions">
+                    <button type="button"
+                            class="btn terminal-drawer-action"
+                            title="@(_fullscreen ? "退出全屏" : "全屏")"
+                            aria-label="@(_fullscreen ? "退出全屏" : "全屏")"
+                            aria-pressed="@_fullscreen"
+                            @onclick="ToggleFullscreen">
+                        @if (_fullscreen)
+                        {
+                            <svg class="terminal-drawer-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                        }
+                        else
+                        {
+                            <svg class="terminal-drawer-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                        }
+                        <span class="terminal-drawer-action-text">@(_fullscreen ? "退出全屏" : "全屏")</span>
+                    </button>
+
+                    <button type="button"
+                            class="btn terminal-drawer-action is-close"
+                            title="关闭终端（Esc）"
+                            aria-label="关闭终端"
+                            @ref="_closeButton"
+                            @onclick="RequestCloseAsync">
+                        <svg class="terminal-drawer-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                        </svg>
+                        <span class="terminal-drawer-action-text">关闭</span>
+                    </button>
+                </div>
+            </header>
+
+            <div class="terminal-drawer-body">
+                @if (NodeId is { } nodeId)
+                {
+                    <TerminalPanel @key="SessionKey"
+                                   NodeId="nodeId"
+                                   Container="ContainerName"
+                                   Enabled="Options.Enabled"
+                                   ShowPickerButton="false"
+                                   LockTarget="true" />
+                }
+                else
+                {
+                    <div class="terminal-drawer-empty">
+                        <strong>未指定节点。</strong>
+                        <span>请先选择节点，再打开终端抽屉。</span>
+                        <button type="button" class="btn" @onclick="RequestCloseAsync">关闭</button>
+                    </div>
+                }
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    private ElementReference _closeButton;
+    private bool _focusApplied;
+    private bool _fullscreen;
+    private Guid? _loadedNodeId;
+    private string? _nodeName;
+
+    /// <summary>要连接的节点；为空时不建立终端会话。</summary>
+    [Parameter]
+    public Guid? NodeId { get; set; }
+
+    /// <summary>容器名或容器 ID；为空即主机终端。</summary>
+    [Parameter]
+    public string? ContainerName { get; set; }
+
+    /// <summary>是否显示抽屉。关闭（设为 false）会卸载终端面板并断开 WebSocket 会话。</summary>
+    [Parameter]
+    public bool Visible { get; set; }
+
+    /// <summary>关闭请求回调（Esc、遮罩点击、关闭按钮均触发）；由父组件把 Visible 设为 false。</summary>
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private bool IsContainer => !string.IsNullOrWhiteSpace(ContainerName);
+
+    private string TitleId => $"terminal-drawer-title-{NodeId?.ToString("N") ?? "none"}";
+
+    private string TitleText => _nodeName ?? (IsContainer ? "容器终端" : "主机终端");
+
+    private string ModeText => IsContainer ? "容器 exec" : "主机终端";
+
+    private string SessionKey => $"{NodeId?.ToString("N") ?? "none"}:{ContainerName ?? string.Empty}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Visible)
+        {
+            _focusApplied = false;
+            _fullscreen = false;
+            return;
+        }
+
+        if (NodeId is not { } nodeId)
+        {
+            _loadedNodeId = null;
+            _nodeName = null;
+            return;
+        }
+
+        if (_loadedNodeId == nodeId)
+        {
+            return;
+        }
+
+        _loadedNodeId = nodeId;
+        _nodeName = null;
+
+        try
+        {
+            var nodes = await NodeService.ListAsync(CancellationToken.None);
+            _nodeName = nodes.FirstOrDefault(node => node.Id.Value == nodeId)?.Name;
+        }
+        catch (Exception)
+        {
+            // 标题取不到节点名不影响终端连接，退回「主机终端/容器终端」。
+            _nodeName = null;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!Visible || _focusApplied)
+        {
+            return;
+        }
+
+        _focusApplied = true;
+        try
+        {
+            await _closeButton.FocusAsync();
+        }
+        catch (InvalidOperationException)
+        {
+            // 元素尚未渲染或已卸载。
+        }
+        catch (JSDisconnectedException)
+        {
+            // 页面已卸载。
+        }
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape" && Visible)
+        {
+            await RequestCloseAsync();
+        }
+    }
+
+    private void ToggleFullscreen()
+    {
+        _fullscreen = !_fullscreen;
+    }
+
+    private Task RequestCloseAsync() => OnClose.InvokeAsync();
+}

@@ -1,0 +1,73 @@
+@using PanelFleet.Web.Components.Websites
+
+<div class="modal-backdrop" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="modal website-modal" @onclick:stopPropagation="true">
+        <h2>新增域名</h2>
+        <p class="muted small">网站：@WebsiteDomain</p>
+        <div class="form-row">
+            <label class="form-label">域名 <span class="required">*</span></label>
+            <input @bind="_domain" @bind:event="oninput" placeholder="例如 app.example.com" maxlength="253" disabled="@Busy" />
+        </div>
+        <div class="form-row">
+            <label class="form-label">端口</label>
+            <input type="number" min="1" max="65535" @bind="_port" disabled="@Busy" />
+        </div>
+        <div class="form-row checkbox-row">
+            <label class="checkbox-inline">
+                <input type="checkbox" @bind="_ssl" disabled="@Busy" />
+                <span>开启 SSL（需先部署证书）</span>
+            </label>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+        <div class="modal-actions">
+            <button type="button" class="btn" @onclick="() => OnCancel.InvokeAsync()" disabled="@Busy">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@Busy">
+                @(Busy ? "处理中…" : "添加（预览确认后执行）")
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _domain = string.Empty;
+    private int _port = 80;
+    private bool _ssl;
+    private string? _error;
+
+    [Parameter]
+    public long WebsiteId { get; set; }
+
+    [Parameter]
+    public string WebsiteDomain { get; set; } = string.Empty;
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<DomainCreateResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        var domain = (_domain ?? string.Empty).Trim();
+        if (domain.Length == 0)
+        {
+            _error = "请填写域名。";
+            return;
+        }
+
+        if (_port is < 1 or > 65535)
+        {
+            _error = "端口必须在 1~65535 之间。";
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(new DomainCreateResult(WebsiteId, domain, _port, _ssl));
+    }
+}

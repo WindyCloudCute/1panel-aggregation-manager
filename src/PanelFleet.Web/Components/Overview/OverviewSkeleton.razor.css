@@ -1,0 +1,97 @@
+/* 首页总览骨架屏（形状对齐 .summary-grid 与 .overview-grid）。 */
+
+.overview-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.overview-skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.overview-skeleton-nodes {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 14px;
+}
+
+.skeleton-card,
+.skeleton-node {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 18px;
+    background: var(--panel, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-lg, 16px);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(15, 23, 42, 0.06));
+}
+
+.skeleton-node {
+    gap: 12px;
+    min-height: 180px;
+}
+
+.skeleton {
+    display: block;
+    height: 12px;
+    border-radius: var(--radius-sm, 8px);
+    background: linear-gradient(90deg,
+        var(--panel-hover, #eef2f7) 0%,
+        var(--border, #e5e7eb) 50%,
+        var(--panel-hover, #eef2f7) 100%);
+    background-size: 200% 100%;
+    animation: overview-skeleton-shimmer 1.4s var(--ease-out, ease-out) infinite;
+}
+
+.skeleton-value {
+    width: 42%;
+    height: 28px;
+}
+
+.skeleton-label {
+    width: 30%;
+}
+
+.skeleton-sub {
+    width: 58%;
+    height: 10px;
+}
+
+.skeleton-node-title {
+    width: 38%;
+    height: 18px;
+}
+
+.skeleton-line {
+    width: 100%;
+}
+
+.skeleton-line-short {
+    width: 65%;
+}
+
+@keyframes overview-skeleton-shimmer {
+    from {
+        background-position: 160% 0;
+    }
+
+    to {
+        background-position: -60% 0;
+    }
+}
+
+@media (max-width: 720px) {
+    .overview-skeleton-nodes {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .skeleton {
+        animation: none;
+    }
+}

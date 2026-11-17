@@ -1,0 +1,279 @@
+@using System.Globalization
+@using System.Text.Json.Nodes
+@using PanelFleet.Application.AppStore
+
+@if (Config is null || App is null)
+{
+    <p class="muted small">正在加载应用配置…</p>
+}
+else
+{
+    <div class="params-editor">
+        <div class="params-editor-head">
+            <h2>修改配置 · @App.Name</h2>
+            <span class="muted small">安装 ID @App.Id</span>
+        </div>
+
+        <div class="alert alert-warn">
+            修改参数会重建/重启应用容器，可能短暂中断服务；请确认端口、密码等参数正确。
+        </div>
+
+        @if (Config.Params.Count == 0)
+        {
+            <p class="muted">该应用没有可编辑的安装参数。</p>
+        }
+        else
+        {
+            @foreach (var parameter in Config.Params)
+            {
+                <div class="form-row">
+                    <label class="form-label">
+                        @parameter.LabelZh
+                        @if (parameter.Required)
+                        {
+                            <span class="required">*</span>
+                        }
+                        <span class="muted small">@parameter.Key</span>
+                    </label>
+
+                    @if (string.Equals(parameter.Type, "select", StringComparison.OrdinalIgnoreCase) && parameter.Options.Count > 0)
+                    {
+                        <select value="@Text(parameter)"
+                                @onchange="e => SetText(parameter, e.Value?.ToString())"
+                                disabled="@(!parameter.Edit)">
+                            @if (!parameter.Required)
+                            {
+                                <option value="">请选择</option>
+                            }
+                            @foreach (var option in parameter.Options)
+                            {
+                                <option value="@option.Value" selected="@(option.Value == Text(parameter))">@option.Label</option>
+                            }
+                        </select>
+                    }
+                    else if (parameter.IsSensitive)
+                    {
+                        <div class="inline-actions">
+                            <input type="@(IsRevealed(parameter.Key) ? "text" : "password")"
+                                   value="@Text(parameter)"
+                                   @onchange="e => SetText(parameter, e.Value?.ToString())"
+                                   disabled="@(!parameter.Edit || Busy)" />
+                            <button type="button" class="btn" @onclick="() => ToggleReveal(parameter.Key)" disabled="@(!parameter.Edit || Busy)">
+                                @(IsRevealed(parameter.Key) ? "隐藏" : "显示")
+                            </button>
+                        </div>
+                    }
+                    else if (string.Equals(parameter.Type, "number", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <input type="number"
+                               value="@Text(parameter)"
+                               @onchange="e => SetText(parameter, e.Value?.ToString())"
+                               disabled="@(!parameter.Edit || Busy)" />
+                    }
+                    else
+                    {
+                        <input value="@Text(parameter)"
+                               @onchange="e => SetText(parameter, e.Value?.ToString())"
+                               disabled="@(!parameter.Edit || Busy)" />
+                    }
+
+                    @if (!parameter.Edit)
+                    {
+                        <span class="muted small">该参数由应用内部管理，不可直接修改。</span>
+                    }
+                </div>
+            }
+        }
+
+        <div class="form-row checkbox-row">
+            <label class="checkbox-inline">
+                <input type="checkbox" checked="@_advanced" @onchange="e => _advanced = e.Value is bool value && value" disabled="@Busy" />
+                <span>高级配置（CPU/内存/容器名/重启策略/编排）</span>
+            </label>
+        </div>
+
+        @if (_advanced)
+        {
+            <div class="params-advanced">
+                <div class="form-row">
+                    <label class="form-label">容器名称</label>
+                    <input @bind="_containerName" disabled="@Busy" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">CPU 限额（核）</label>
+                    <input type="number" step="0.1" min="0" @bind="_cpuQuota" disabled="@Busy" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">内存限额</label>
+                    <div class="inline-actions">
+                        <input type="number" min="0" @bind="_memoryLimit" disabled="@Busy" />
+                        <select @bind="_memoryUnit" disabled="@Busy">
+                            <option value="M">MB</option>
+                            <option value="G">GB</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label">重启策略</label>
+                    <select @bind="_restartPolicy" disabled="@Busy">
+                        <option value="always">always</option>
+                        <option value="unless-stopped">unless-stopped</option>
+                        <option value="on-failure">on-failure</option>
+                        <option value="no">no</option>
+                    </select>
+                </div>
+                <div class="form-row checkbox-row">
+                    <label class="checkbox-inline">
+                        <input type="checkbox" @bind="_allowPort" disabled="@Busy" />
+                        <span>允许端口外部访问（allowPort）</span>
+                    </label>
+                </div>
+                @if (_allowPort)
+                {
+                    <div class="form-row">
+                        <label class="form-label">绑定 IP（可选）</label>
+                        <input @bind="_specifyIp" disabled="@Busy" />
+                    </div>
+                }
+            </div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        <div class="params-editor-actions">
+            <button type="button" class="btn" @onclick="() => OnCancel.InvokeAsync()" disabled="@Busy">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync" disabled="@Busy">
+                @(Busy ? "处理中…" : "保存（预览确认后执行）")
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _revealed = new(StringComparer.Ordinal);
+    private bool _advanced;
+    private double _cpuQuota;
+    private long _memoryLimit;
+    private string _memoryUnit = "M";
+    private string? _containerName;
+    private bool _allowPort;
+    private string? _specifyIp;
+    private string _restartPolicy = "always";
+    private string? _error;
+    private long _loadedInstallId;
+
+    [Parameter]
+    public InstalledAppConfig? Config { get; set; }
+
+    [Parameter]
+    public InstalledAppItem? App { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<AppParamsEditResult> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (Config is null || App is null || _loadedInstallId == App.Id)
+        {
+            return;
+        }
+
+        _loadedInstallId = App.Id;
+        _values.Clear();
+        foreach (var parameter in Config.Params)
+        {
+            _values[parameter.Key] = parameter.Value ?? string.Empty;
+        }
+
+        _advanced = false;
+        _cpuQuota = Config.CpuQuota;
+        _memoryLimit = Config.MemoryLimit;
+        _memoryUnit = string.IsNullOrWhiteSpace(Config.MemoryUnit) ? "M" : Config.MemoryUnit;
+        _containerName = Config.ContainerName;
+        _allowPort = Config.AllowPort;
+        _specifyIp = Config.SpecifyIP;
+        _restartPolicy = string.IsNullOrWhiteSpace(Config.RestartPolicy) ? "always" : Config.RestartPolicy;
+        _error = null;
+    }
+
+    private string Text(InstalledParam parameter) =>
+        _values.TryGetValue(parameter.Key, out var value) ? value : string.Empty;
+
+    private void SetText(InstalledParam parameter, string? value) =>
+        _values[parameter.Key] = value ?? string.Empty;
+
+    private bool IsRevealed(string key) => _revealed.Contains(key);
+
+    private void ToggleReveal(string key)
+    {
+        if (!_revealed.Add(key))
+        {
+            _revealed.Remove(key);
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (Config is null || App is null)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject();
+        foreach (var parameter in Config.Params)
+        {
+            var text = Text(parameter);
+            if (parameter.Required && string.IsNullOrWhiteSpace(text))
+            {
+                _error = $"请填写必填参数：{parameter.LabelZh}";
+                return;
+            }
+
+            if (string.Equals(parameter.Type, "number", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(text))
+            {
+                if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer))
+                {
+                    parameters[parameter.Key] = integer;
+                }
+                else if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
+                {
+                    parameters[parameter.Key] = number;
+                }
+                else
+                {
+                    _error = $"参数 {parameter.LabelZh} 不是合法数字。";
+                    return;
+                }
+            }
+            else
+            {
+                parameters[parameter.Key] = text;
+            }
+        }
+
+        await OnSubmit.InvokeAsync(new AppParamsEditResult(
+            App.Id,
+            App.Name,
+            parameters,
+            _advanced,
+            _advanced ? _cpuQuota : null,
+            _advanced ? _memoryLimit : null,
+            _advanced ? _memoryUnit : null,
+            _advanced ? _containerName : null,
+            _advanced ? _allowPort : null,
+            _advanced ? _specifyIp : null,
+            _advanced ? _restartPolicy : null));
+    }
+}

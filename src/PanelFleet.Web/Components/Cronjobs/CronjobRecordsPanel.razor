@@ -1,0 +1,248 @@
+@using PanelFleet.Application.Cronjobs
+@inject ICronjobService CronjobService
+
+<div class="cronjob-records card">
+    <div class="cronjob-records-header">
+        <h2>执行记录 · @CronjobName</h2>
+        <div class="actions">
+            <button type="button" class="btn" @onclick="LoadAsync" disabled="@_loading">@(_loading ? "加载中…" : "刷新")</button>
+            <button type="button" class="btn" @onclick="CloseAsync">关闭</button>
+        </div>
+    </div>
+
+    <div class="cronjob-records-toolbar">
+        <label class="cronjob-field">
+            <span>开始日期</span>
+            <input type="date" @bind="_startDate" disabled="@_loading" />
+        </label>
+        <label class="cronjob-field">
+            <span>结束日期</span>
+            <input type="date" @bind="_endDate" disabled="@_loading" />
+        </label>
+        <label class="cronjob-field">
+            <span>状态</span>
+            <select @bind="_status" @bind:after="LoadAsync" disabled="@_loading">
+                <option value="">全部</option>
+                <option value="Success">成功</option>
+                <option value="Failed">失败</option>
+                <option value="Waiting">等待中</option>
+                <option value="Unexecuted">未执行</option>
+            </select>
+        </label>
+        <button type="button" class="btn" @onclick="LoadAsync" disabled="@_loading">查询</button>
+        <span class="muted small">默认最近 7 天</span>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="alert alert-error">@_error</div>
+    }
+
+    @if (_records is null)
+    {
+        <p class="muted">正在加载执行记录…</p>
+    }
+    else if (_records.Rows.Count == 0)
+    {
+        <div class="cronjob-records-empty">
+            <p>所选时间范围内暂无执行记录。</p>
+            <p class="muted small">任务执行完成后记录会出现在这里；立即执行后请稍后刷新。</p>
+        </div>
+    }
+    else
+    {
+        <div class="cronjob-records-body">
+            <div class="cronjob-records-list">
+                <table class="cronjob-records-table">
+                    <thead>
+                        <tr>
+                            <th>状态</th>
+                            <th>开始时间</th>
+                            <th>耗时</th>
+                            <th>消息</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var record in _records.Rows)
+                        {
+                            <tr class="@(_selectedRecordId == record.Id ? "is-selected" : string.Empty)">
+                                <td>@record.StatusText</td>
+                                <td>@record.StartTime</td>
+                                <td>@FormatDuration(record.IntervalSeconds)</td>
+                                <td class="cronjob-record-message">@record.Message</td>
+                                <td>
+                                    <button type="button" class="btn btn-xs" @onclick="() => LoadLogAsync(record)">
+                                        查看日志
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                <div class="resource-pagination">
+                    <span class="muted small">
+                        共 @_records.Total 条 · 第 @_records.Page/@Math.Max(_records.TotalPages, 1) 页
+                    </span>
+                    <div class="actions">
+                        <button type="button" class="btn" @onclick="PreviousPageAsync" disabled="@(_loading || _page <= 1)">上一页</button>
+                        <button type="button" class="btn" @onclick="NextPageAsync" disabled="@(_loading || _records.Page >= Math.Max(_records.TotalPages, 1))">下一页</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cronjob-log-panel">
+                <div class="cronjob-log-header">
+                    <span class="muted small">记录日志</span>
+                    @if (_logLoading)
+                    {
+                        <span class="muted small">加载中…</span>
+                    }
+                </div>
+                @if (_logError is not null)
+                {
+                    <div class="alert alert-error">@_logError</div>
+                }
+                else if (_log is null)
+                {
+                    <p class="muted small">选择一条记录查看日志（1Panel 记录文件可能为空）。</p>
+                }
+                else
+                {
+                    @if (_log.Truncated)
+                    {
+                        <div class="alert alert-warn">日志较大，仅显示前 256 KiB。</div>
+                    }
+                    @if (string.IsNullOrEmpty(_log.Content))
+                    {
+                        <p class="muted small">该记录暂无日志内容。</p>
+                    }
+                    else
+                    {
+                        <pre class="cronjob-log-content">@_log.Content</pre>
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const int PageSize = 20;
+
+    private CronjobRecordsResult? _records;
+    private int _page = 1;
+    private DateTime? _startDate;
+    private DateTime? _endDate;
+    private string _status = string.Empty;
+    private bool _loading;
+    private string? _error;
+
+    private long? _selectedRecordId;
+    private CronjobRecordLog? _log;
+    private bool _logLoading;
+    private string? _logError;
+
+    [Parameter]
+    public Guid NodeId { get; set; }
+
+    [Parameter]
+    public long CronjobId { get; set; }
+
+    [Parameter]
+    public string CronjobName { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _records = await CronjobService.GetRecordsAsync(
+                NodeId,
+                CronjobId,
+                ToOffset(_startDate),
+                ToOffset(_endDate)?.AddDays(1).AddTicks(-1),
+                _status,
+                _page,
+                PageSize,
+                CancellationToken.None);
+
+            if (_records.Error is not null)
+            {
+                _error = "加载执行记录失败：" + _records.Error.Message;
+            }
+        }
+        catch (Exception exception)
+        {
+            _error = "加载执行记录失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_page <= 1)
+        {
+            return;
+        }
+
+        _page--;
+        await LoadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (_records is null || _page >= Math.Max(_records.TotalPages, 1))
+        {
+            return;
+        }
+
+        _page++;
+        await LoadAsync();
+    }
+
+    private async Task LoadLogAsync(CronjobRecordRow record)
+    {
+        _selectedRecordId = record.Id;
+        _log = null;
+        _logError = null;
+        _logLoading = true;
+        StateHasChanged();
+        try
+        {
+            _log = await CronjobService.GetRecordLogAsync(NodeId, record.Id, CancellationToken.None);
+            if (_log.Error is not null)
+            {
+                _logError = "读取日志失败：" + _log.Error.Message;
+            }
+        }
+        catch (Exception exception)
+        {
+            _logError = "读取日志失败：" + exception.Message;
+        }
+        finally
+        {
+            _logLoading = false;
+        }
+    }
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+
+    private static DateTimeOffset? ToOffset(DateTime? date) =>
+        date is { } value ? new DateTimeOffset(DateTime.SpecifyKind(value.Date, DateTimeKind.Local)) : null;
+
+    private static string FormatDuration(double seconds) =>
+        seconds <= 0 ? "-" : seconds < 60
+            ? $"{seconds:0.#} 秒"
+            : TimeSpan.FromSeconds(seconds).ToString(@"hh\:mm\:ss");
+}

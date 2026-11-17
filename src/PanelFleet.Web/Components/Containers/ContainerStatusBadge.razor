@@ -1,0 +1,37 @@
+@using PanelFleet.Application.Containers
+
+@if (string.IsNullOrWhiteSpace(State))
+{
+    <span class="badge badge-unknown">未知</span>
+}
+else
+{
+    <span class="badge @CssClass">@Text</span>
+}
+
+@code {
+    [Parameter]
+    public string? State { get; set; }
+
+    private string Text => ContainerStates.Normalize(State) switch
+    {
+        ContainerStates.Running => "运行中",
+        ContainerStates.Exited => "已停止",
+        ContainerStates.Paused => "已暂停",
+        ContainerStates.Restarting => "重启中",
+        ContainerStates.Created => "已创建",
+        ContainerStates.Dead => "异常",
+        ContainerStates.Removing => "删除中",
+        "unknown" => "未知",
+        _ => State ?? "未知"
+    };
+
+    private string CssClass => ContainerStates.Normalize(State) switch
+    {
+        ContainerStates.Running => "badge-ok",
+        ContainerStates.Paused or ContainerStates.Restarting => "badge-warn",
+        ContainerStates.Exited or ContainerStates.Created => "badge-unknown",
+        ContainerStates.Dead => "badge-error",
+        _ => "badge-unknown"
+    };
+}

@@ -1,0 +1,149 @@
+/* 页面外壳：统一页面纵向节奏，并对页面内既有表格/卡片/按钮做令牌化打磨。
+   页面文件本身没有 scoped CSS（Pages/*.razor.css 不在本次写范围），因此集中在这里用 ::deep 覆盖。 */
+
+.page-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.page-shell ::deep .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 14px;
+    align-items: start;
+}
+
+/* 页面主体淡入；只做 opacity，不用 transform（transform 会让内部 position:fixed 浮层相对本元素定位，见 docs/19 §8）。reduced-motion 下关闭。 */
+.page-shell ::deep .form-card,
+.page-shell ::deep .card {
+    animation: page-rise var(--dur-slow, 320ms) var(--ease-out, ease-out);
+}
+
+@keyframes page-rise {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+.page-shell ::deep .card,
+.page-shell ::deep .table-wrap {
+    background: var(--panel, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-lg, 16px);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(15, 23, 42, 0.06));
+}
+
+.page-shell ::deep .table-wrap {
+    overflow: hidden;
+}
+
+.page-shell ::deep .table {
+    width: 100%;
+}
+
+.page-shell ::deep .table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--panel-hover, #f8fafc);
+    color: var(--muted, #374151);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.page-shell ::deep .table tbody tr {
+    transition: background var(--dur-fast, 120ms) var(--ease-out, ease-out);
+}
+
+.page-shell ::deep .table tbody tr:hover {
+    background: var(--panel-hover, #f1f5f9);
+}
+
+.page-shell ::deep .btn {
+    border-radius: var(--radius-md, 10px);
+    transition: transform var(--dur-fast, 120ms) var(--ease-out, ease-out),
+                box-shadow var(--dur-fast, 120ms) var(--ease-out, ease-out),
+                background var(--dur-fast, 120ms) var(--ease-out, ease-out);
+}
+
+.page-shell ::deep .btn:active {
+    transform: scale(0.97);
+}
+
+.page-shell ::deep .btn:focus-visible,
+.page-shell ::deep .link-button:focus-visible,
+.page-shell ::deep input:focus-visible,
+.page-shell ::deep select:focus-visible,
+.page-shell ::deep textarea:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--primary, #2563eb));
+    outline-offset: 2px;
+}
+
+.page-shell ::deep .link-button {
+    border-radius: var(--radius-sm, 8px);
+    padding: 2px 6px;
+    transition: background var(--dur-fast, 120ms) var(--ease-out, ease-out),
+                color var(--dur-fast, 120ms) var(--ease-out, ease-out);
+}
+
+.page-shell ::deep .link-button:hover {
+    background: var(--panel-hover, #f1f5f9);
+}
+
+.page-shell ::deep .alert {
+    border-radius: var(--radius-md, 12px);
+    border: 1px solid transparent;
+}
+
+.page-shell ::deep .alert-error {
+    border-color: color-mix(in srgb, var(--error, #dc2626) 24%, transparent);
+}
+
+.page-shell ::deep .alert-warn {
+    border-color: color-mix(in srgb, var(--warn, #b45309) 24%, transparent);
+}
+
+.page-shell ::deep input,
+.page-shell ::deep select,
+.page-shell ::deep textarea {
+    border-radius: var(--radius-md, 10px);
+    transition: border-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+                box-shadow var(--dur-fast, 120ms) var(--ease-out, ease-out);
+}
+
+.page-shell ::deep input:focus,
+.page-shell ::deep select:focus,
+.page-shell ::deep textarea:focus {
+    border-color: var(--primary, #2563eb);
+    box-shadow: 0 0 0 3px var(--primary-soft, rgba(37, 99, 235, 0.16));
+}
+
+.page-shell ::deep .modal {
+    border-radius: var(--radius-xl, 22px);
+    box-shadow: var(--shadow-lg, 0 24px 48px rgba(15, 23, 42, 0.24));
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .page-shell ::deep .table tbody tr,
+    .page-shell ::deep .btn,
+    .page-shell ::deep input,
+    .page-shell ::deep select,
+    .page-shell ::deep textarea {
+        transition: none;
+    }
+
+    .page-shell ::deep .btn:active {
+        transform: none;
+    }
+
+    .page-shell ::deep .card,
+    .page-shell ::deep .form-card {
+        animation: none;
+    }
+}

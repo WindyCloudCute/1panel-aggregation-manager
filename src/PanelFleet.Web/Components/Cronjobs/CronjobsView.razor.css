@@ -1,0 +1,296 @@
+/* 计划任务工作台：左侧节点/任务树 + 右侧列表。颜色/圆角/动效全部走语义令牌并带兜底。 */
+
+.cronjobs-page-header {
+    align-items: flex-start;
+}
+
+.page-header-title {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.page-header-title h1 {
+    margin: 0;
+}
+
+.page-subtitle {
+    margin: 4px 0 0;
+    color: var(--muted, #6b7280);
+    font-size: 13px;
+}
+
+.btn-tree-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 8px;
+    line-height: 0;
+}
+
+.workbench {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+    animation: pf-workbench-in var(--dur, 200ms) var(--ease-out, ease-out) both;
+}
+
+.workbench.is-tree-open .workbench-tree {
+    display: block;
+}
+
+.workbench-backdrop {
+    display: none;
+}
+
+.workbench-tree {
+    position: sticky;
+    top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: calc(100vh - 140px);
+    padding: 14px 12px;
+    overflow: auto;
+    background: var(--panel, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-lg, 16px);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(15, 23, 42, 0.06));
+    scrollbar-width: thin;
+}
+
+.workbench-main {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.tree-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 4px 8px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.scope-eyebrow {
+    color: var(--muted, #6b7280);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.scope-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, var(--primary-soft, #eef2ff), var(--panel, #ffffff) 70%);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-lg, 16px);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(15, 23, 42, 0.06));
+    transition: transform var(--dur, 200ms) var(--ease-out, ease-out), box-shadow var(--dur, 200ms) var(--ease-out, ease-out);
+}
+
+.scope-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md, 0 6px 16px rgba(15, 23, 42, 0.08));
+}
+
+.scope-card-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.scope-title {
+    font-size: 16px;
+}
+
+.cronjobs-toolbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    background: var(--panel, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-md, 12px);
+}
+
+.cronjob-node-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 8px;
+}
+
+.cronjob-node-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: var(--panel-hover, #e5e7eb);
+    color: var(--text, #374151);
+}
+
+.cronjob-node-chip.is-ok {
+    background: color-mix(in srgb, var(--ok, #15803d) 14%, transparent);
+    color: var(--ok, #15803d);
+}
+
+.cronjob-node-chip.is-failed {
+    background: color-mix(in srgb, var(--error, #b91c1c) 14%, transparent);
+    color: var(--error, #b91c1c);
+}
+
+.cronjob-node-chip span {
+    font-weight: 600;
+}
+
+.cronjobs-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+    background: var(--panel, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: var(--radius-lg, 16px);
+}
+
+.skeleton-row {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) 160px;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.skeleton-row:last-child {
+    border-bottom: 0;
+}
+
+.skeleton-cell {
+    position: relative;
+    display: block;
+    height: 12px;
+    overflow: hidden;
+    background: var(--panel-hover, #e5e7eb);
+    border-radius: var(--radius-sm, 8px);
+}
+
+.skeleton-cell-sm {
+    width: 24px;
+}
+
+.skeleton-cell-md {
+    width: 120px;
+}
+
+.skeleton-cell::after {
+    position: absolute;
+    inset: 0;
+    content: "";
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+    transform: translateX(-100%);
+    animation: pf-skeleton-shimmer 1.4s infinite;
+}
+
+.btn:active {
+    transform: scale(0.97);
+}
+
+@keyframes pf-workbench-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes pf-skeleton-shimmer {
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+@media (max-width: 1023px) {
+    .btn-tree-toggle {
+        display: inline-flex;
+    }
+
+    .workbench {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .workbench-tree {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 40;
+        display: none;
+        width: min(320px, 86vw);
+        max-height: none;
+        border-radius: 0 var(--radius-lg, 16px) var(--radius-lg, 16px) 0;
+        box-shadow: var(--shadow-lg, 0 18px 40px rgba(15, 23, 42, 0.24));
+        animation: pf-tree-slide-in var(--dur, 200ms) var(--ease-out, ease-out) both;
+    }
+
+    .workbench.is-tree-open .workbench-tree {
+        display: flex;
+    }
+
+    .workbench-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 39;
+        display: block;
+        background: rgba(15, 23, 42, 0.4);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--dur, 200ms) var(--ease-out, ease-out);
+    }
+
+    .workbench.is-tree-open .workbench-backdrop {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
+@keyframes pf-tree-slide-in {
+    from {
+        opacity: 0;
+        transform: translateX(-16px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .workbench,
+    .workbench-tree,
+    .workbench-backdrop,
+    .scope-card,
+    .btn,
+    .skeleton-cell::after {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    .scope-card:hover {
+        transform: none;
+    }
+}

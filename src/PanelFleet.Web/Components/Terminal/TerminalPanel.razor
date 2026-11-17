@@ -1,0 +1,411 @@
+@using PanelFleet.Application.Terminal
+@inject INodeService NodeService
+@inject TerminalOptions Options
+@inject NavigationManager Navigation
+
+<div class="terminal-panel">
+    @if (!Enabled)
+    {
+        <div class="terminal-alert terminal-alert-warn">
+            <strong>终端功能已禁用。</strong>
+            管理员可通过配置项 <code>Terminal:Enabled=false</code> 关闭终端；如需使用请联系管理员。
+        </div>
+    }
+    else if (!_nodesLoaded)
+    {
+        <div class="terminal-panel-skeleton" aria-busy="true" aria-label="正在加载节点">
+            <div class="terminal-skeleton-line"></div>
+            <div class="terminal-skeleton-block"></div>
+        </div>
+    }
+    else if (_nodesLoaded && _nodes.Count == 0)
+    {
+        <div class="terminal-alert terminal-alert-warn">
+            还没有启用中的节点。<a href="/nodes/new">添加节点</a>并启用后即可使用终端。
+        </div>
+    }
+    else
+    {
+        <div class="terminal-toolbar">
+            @if (!LockTarget)
+            {
+                <label class="terminal-field">
+                    <span>节点</span>
+                    <select @bind="_selectedNodeValue" @bind:after="OnNodeChangedAsync" disabled="@IsBusy">
+                        @foreach (var node in _nodes)
+                        {
+                            <option value="@node.Id.Value">@node.Name</option>
+                        }
+                    </select>
+                </label>
+
+                <label class="terminal-field">
+                    <span>模式</span>
+                    <select @bind="_modeValue" @bind:after="OnModeChangedAsync" disabled="@IsBusy">
+                        <option value="host">主机终端</option>
+                        <option value="container">容器终端</option>
+                    </select>
+                </label>
+
+                @if (IsContainerMode)
+                {
+                    <label class="terminal-field terminal-field-wide">
+                        <span>容器</span>
+                        <input placeholder="容器名或容器 ID"
+                               @bind="_container"
+                               @bind:event="oninput"
+                               disabled="@IsBusy" />
+                    </label>
+                }
+            }
+
+            <label class="terminal-field">
+                <span>字号</span>
+                <select @bind="_fontSize" @bind:after="ApplyFontSizeAsync" disabled="@IsBusy">
+                    @for (var size = 12; size <= 20; size++)
+                    {
+                        <option value="@size">@size</option>
+                    }
+                </select>
+            </label>
+
+            <div class="terminal-actions">
+                @if (ShowPickerButton)
+                {
+                    <button type="button" class="btn" @onclick="BackToPickerAsync" disabled="@_connecting">选择节点</button>
+                }
+                @if (!Connected)
+                {
+                    <button type="button" class="btn btn-primary"
+                            @onclick="ConnectAsync"
+                            disabled="@(!CanConnect || _connecting)">
+                        @(_connecting ? "连接中…" : "连接")
+                    </button>
+                }
+                else
+                {
+                    <button type="button" class="btn" @onclick="DisconnectAsync">断开</button>
+                    <button type="button" class="btn" @onclick="ReconnectAsync">重连</button>
+                }
+            </div>
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="terminal-alert terminal-alert-error">@_error</div>
+        }
+
+        <TerminalStatusBar Status="@_status"
+                           StatusText="@StatusText"
+                           NodeName="@SelectedNodeName"
+                           ContainerMode="IsContainerMode"
+                           Container="@_container"
+                           Connected="Connected"
+                           FallbackMode="_fallback"
+                           LatencyMs="_latency" />
+
+        <TerminalConsole @ref="_console" FontSize="_fontSize" OnEvent="HandleTerminalEventAsync" />
+
+        <p class="terminal-hint">
+            提示：终端会话仅管理员可用，操作会记录会话开始/结束审计（<strong>不记录输入内容</strong>）；
+            空闲 30 分钟或达到最长时长会自动断开。通过反向代理访问时需透传 WebSocket Upgrade。
+        </p>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private bool _nodesLoaded;
+    private Guid? _selectedNodeId;
+    private string _selectedNodeValue = string.Empty;
+    private string _modeValue = "host";
+    private string _container = string.Empty;
+    private int _fontSize = 14;
+
+    private string _status = "idle";
+    private string? _statusDetail;
+    private bool _connected;
+    private bool _connecting;
+    private bool _fallback;
+    private bool _canReconnect;
+    private int? _latency;
+    private string? _error;
+    private bool _autoConnect;
+    private bool _initialized;
+
+    private TerminalConsole? _console;
+
+    /// <summary>初始节点（支持 /terminal?nodeId=...）。</summary>
+    [Parameter]
+    public Guid? NodeId { get; set; }
+
+    /// <summary>初始容器（支持 /terminal?nodeId=...&amp;container=...；为空即主机终端）。</summary>
+    [Parameter]
+    public string? Container { get; set; }
+
+    /// <summary>是否启用终端（false 时显示禁用提示）。</summary>
+    [Parameter]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>是否显示「选择节点」按钮（嵌入抽屉等场景可隐藏，关闭抽屉即可更换目标）。</summary>
+    [Parameter]
+    public bool ShowPickerButton { get; set; } = true;
+
+    /// <summary>是否锁定目标节点/模式/容器（true 时隐藏节点、模式、容器输入，仅保留字号与连接操作）。</summary>
+    [Parameter]
+    public bool LockTarget { get; set; }
+
+    private bool IsContainerMode => _modeValue == "container";
+
+    private bool Connected => _connected;
+
+    private bool IsBusy => _connecting || _connected;
+
+    private string? SelectedNodeName =>
+        _nodes.FirstOrDefault(node => node.Id.Value == _selectedNodeId)?.Name;
+
+    private bool CanConnect => _selectedNodeId is not null
+        && (!IsContainerMode || !string.IsNullOrWhiteSpace(_container));
+
+    private string StatusText => _status switch
+    {
+        "connecting" => "连接中…",
+        "connected" => "已连接",
+        "closed" => string.IsNullOrWhiteSpace(_statusDetail) ? "已断开" : "已断开：" + _statusDetail,
+        "error" => string.IsNullOrWhiteSpace(_statusDetail) ? "连接错误" : "连接错误：" + _statusDetail,
+        _ => "未连接"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var nodes = await NodeService.ListAsync(CancellationToken.None);
+            _nodes = nodes.Where(node => node.IsEnabled).ToArray();
+            _nodesLoaded = true;
+        }
+        catch (Exception exception)
+        {
+            _nodesLoaded = true;
+            _error = "加载节点列表失败：" + exception.Message;
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Container))
+        {
+            _modeValue = "container";
+            _container = Container.Trim();
+        }
+
+        var preferred = NodeId is { } requested && _nodes.Any(node => node.Id.Value == requested)
+            ? requested
+            : _nodes.FirstOrDefault()?.Id.Value;
+        _selectedNodeId = preferred;
+        _selectedNodeValue = preferred?.ToString("D") ?? string.Empty;
+
+        _autoConnect = NodeId is not null || !string.IsNullOrWhiteSpace(Container);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || !RendererInfo.IsInteractive || _initialized || !Enabled)
+        {
+            return;
+        }
+
+        _initialized = true;
+        if (_console is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _console.EnsureInitializedAsync();
+        }
+        catch (Exception exception)
+        {
+            _error = "终端渲染器初始化失败：" + exception.Message;
+            return;
+        }
+
+        if (_autoConnect && CanConnect && !_connected && !_connecting)
+        {
+            await ConnectAsync();
+        }
+    }
+
+    private async Task OnNodeChangedAsync()
+    {
+        _selectedNodeId = Guid.TryParse(_selectedNodeValue, out var id) ? id : null;
+        _statusDetail = null;
+        _latency = null;
+        if (_connected || _connecting)
+        {
+            await DisconnectAsync();
+        }
+    }
+
+    private async Task OnModeChangedAsync()
+    {
+        _statusDetail = null;
+        if (_connected || _connecting)
+        {
+            await DisconnectAsync();
+        }
+    }
+
+    private async Task ApplyFontSizeAsync()
+    {
+        if (_console is not null)
+        {
+            await _console.SetFontSizeAsync(_fontSize);
+        }
+    }
+
+    private async Task ConnectAsync()
+    {
+        _error = null;
+        _statusDetail = null;
+        _latency = null;
+
+        if (!CanConnect)
+        {
+            _error = IsContainerMode ? "请输入容器名或容器 ID。" : "请选择节点。";
+            return;
+        }
+
+        if (_console is null)
+        {
+            _error = "终端尚未就绪，请稍后重试。";
+            return;
+        }
+
+        try
+        {
+            await _console.EnsureInitializedAsync();
+            _connecting = true;
+            _status = "connecting";
+            _statusDetail = null;
+            StateHasChanged();
+
+            var url = BuildTerminalUrl();
+            await _console.ConnectAsync(url);
+        }
+        catch (Exception exception)
+        {
+            _connecting = false;
+            _connected = false;
+            _status = "error";
+            _statusDetail = exception.Message;
+            _error = "无法打开终端：" + exception.Message;
+        }
+    }
+
+    private async Task ReconnectAsync()
+    {
+        await ConnectAsync();
+    }
+
+    private async Task DisconnectAsync()
+    {
+        if (_console is not null)
+        {
+            await _console.DisconnectAsync();
+        }
+
+        _connected = false;
+        _connecting = false;
+        _status = "idle";
+        _statusDetail = null;
+    }
+
+    private async Task BackToPickerAsync()
+    {
+        if (_connected || _connecting)
+        {
+            await DisconnectAsync();
+        }
+
+        Navigation.NavigateTo("/terminal");
+    }
+
+    private string BuildTerminalUrl()
+    {
+        var baseUri = new Uri(Navigation.BaseUri);
+        var endpoint = new Uri(baseUri, "ws/terminal");
+        var scheme = endpoint.Scheme == Uri.UriSchemeHttps ? "wss" : "ws";
+
+        var pairs = new List<string>
+        {
+            "nodeId=" + Uri.EscapeDataString(_selectedNodeId!.Value.ToString("D"))
+        };
+        if (IsContainerMode)
+        {
+            pairs.Add("container=" + Uri.EscapeDataString(_container.Trim()));
+        }
+
+        return $"{scheme}://{endpoint.Authority}{endpoint.AbsolutePath}?{string.Join("&", pairs)}";
+    }
+
+    private async Task HandleTerminalEventAsync(TerminalEvent terminalEvent)
+    {
+        switch (terminalEvent.Kind)
+        {
+            case "mode":
+                _fallback = string.Equals(terminalEvent.Mode, "simple", StringComparison.Ordinal);
+                break;
+
+            case "status":
+                switch (terminalEvent.Status)
+                {
+                    case "connecting":
+                        _status = "connecting";
+                        _connecting = true;
+                        break;
+                    case "connected":
+                        _status = "connected";
+                        _connecting = false;
+                        break;
+                    case "closed":
+                        _status = "closed";
+                        _connecting = false;
+                        _connected = false;
+                        break;
+                    case "error":
+                        _status = "error";
+                        _statusDetail = terminalEvent.Message;
+                        _connecting = false;
+                        _connected = false;
+                        break;
+                }
+
+                break;
+
+            case "ready":
+                _connected = true;
+                _connecting = false;
+                _status = "connected";
+                _error = null;
+                break;
+
+            case "closed":
+                _connected = false;
+                _connecting = false;
+                _status = "closed";
+                _statusDetail = terminalEvent.Message;
+                _canReconnect = terminalEvent.CanReconnect;
+                break;
+
+            case "error":
+                _error = terminalEvent.Message;
+                break;
+
+            case "latency":
+                _latency = terminalEvent.Ms is { } ms ? (int)Math.Round(ms) : null;
+                break;
+        }
+
+        await Task.CompletedTask;
+    }
+}

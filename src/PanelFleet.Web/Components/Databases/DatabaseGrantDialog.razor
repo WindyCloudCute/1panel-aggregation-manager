@@ -1,0 +1,107 @@
+@using PanelFleet.Application.Databases
+@using PanelFleet.Web.Components.Databases
+
+<div class="modal-backdrop" @onclick="OnCancel">
+    <div class="modal" style="max-width: 540px;" @onclick:stopPropagation="true">
+        <h2>授予数据库权限</h2>
+        <p class="muted small">授权变更立即生效，请确认账号与目标库匹配（最小权限原则）。</p>
+
+        <div class="form-row">
+            <label>数据库</label>
+            @if (Dbs.Count == 0)
+            {
+                <span class="muted small">该实例下暂无可授权的数据库。</span>
+            }
+            else
+            {
+                <select @bind="_db">
+                    @foreach (var db in Dbs)
+                    {
+                        <option value="@db">@db</option>
+                    }
+                </select>
+            }
+        </div>
+        <div class="form-row">
+            <label>数据库账号</label>
+            @if (Users.Count == 0)
+            {
+                <span class="muted small">该实例下暂无数据库用户。</span>
+            }
+            else
+            {
+                <select @bind="_userValue">
+                    @foreach (var user in Users)
+                    {
+                        <option value="@(user.Username + "@" + user.Host)">@user.Username（@user.Host）</option>
+                    }
+                </select>
+            }
+        </div>
+        <div class="form-row">
+            <label>主机 / 访问范围</label>
+            <input @bind="_host" placeholder="% / localhost / IP" />
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        <div class="actions">
+            <button type="button" class="btn" @onclick="OnCancel">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync">下一步：预览确认</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string? _db;
+    private string? _userValue;
+    private string _host = "%";
+    private string? _error;
+
+    [Parameter]
+    public IReadOnlyList<string> Dbs { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyList<DatabaseUserView> Users { get; set; } = [];
+
+    [Parameter]
+    public EventCallback<DatabaseGrantForm> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        _db ??= Dbs.FirstOrDefault();
+        if (_userValue is null && Users.Count > 0)
+        {
+            _userValue = Users[0].Username + "@" + Users[0].Host;
+            _host = Users[0].Host;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_db))
+        {
+            _error = "请选择数据库。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_userValue) || !_userValue.Contains('@', StringComparison.Ordinal))
+        {
+            _error = "请选择数据库账号。";
+            return;
+        }
+
+        var parts = _userValue.Split('@', 2);
+        await OnSubmit.InvokeAsync(new DatabaseGrantForm(
+            _db.Trim(),
+            parts[0],
+            string.IsNullOrWhiteSpace(_host) ? parts[1] : _host.Trim()));
+    }
+}

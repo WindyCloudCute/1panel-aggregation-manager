@@ -1,0 +1,1095 @@
+@using System.Text.Json.Nodes
+@using Microsoft.JSInterop
+@using PanelFleet.Application.Cronjobs
+@using PanelFleet.Application.Models
+@using PanelFleet.Application.Operations
+@using PanelFleet.Web.Components.Navigation
+@inject ICronjobService CronjobService
+@inject INodeService NodeService
+@inject IWriteOperationService WriteOperations
+@inject IActorProvider ActorProvider
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="page-header cronjobs-page-header">
+    <div class="page-header-title">
+        <button type="button"
+                class="btn btn-tree-toggle"
+                @onclick="ToggleTree"
+                aria-label="展开或收起节点树"
+                aria-expanded="@_treeOpen">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 6h16M4 12h10M4 18h7" />
+                <circle cx="18" cy="17" r="3" />
+                <path d="M18 14v-1.5M18 21.5V20" />
+            </svg>
+        </button>
+        <div>
+            <h1>计划任务</h1>
+            <p class="page-subtitle">按节点浏览任务，批量操作按节点顺序执行、失败即停止。</p>
+        </div>
+    </div>
+    <div class="actions">
+        @if (_list is not null)
+        {
+            <span class="muted small">更新于 @_list.GeneratedAt.ToLocalTime().ToString("HH:mm:ss")</span>
+        }
+        @if (_loading)
+        {
+            <span class="muted small">加载中…</span>
+        }
+        <button type="button" class="btn" @onclick="RefreshAsync" disabled="@_loading">刷新</button>
+        <button type="button" class="btn btn-primary" @onclick="OpenCreateFormAsync" disabled="@(!CanCreate)">
+            新建任务
+        </button>
+    </div>
+</div>
+
+@if (_nodesLoaded && _enabledNodes.Count == 0)
+{
+    <div class="card">
+        <p class="muted">
+            还没有可用的节点，先到 <a href="/nodes/new">添加节点</a> 接入第一台 1Panel 并启用，再管理计划任务。
+        </p>
+    </div>
+}
+else
+{
+    <div class="workbench @(_treeOpen ? "is-tree-open" : string.Empty)">
+        <div class="workbench-backdrop" @onclick="CloseTree" aria-hidden="true"></div>
+
+        <aside class="workbench-tree" aria-label="节点与计划任务">
+            <div class="tree-head">
+                <span class="scope-eyebrow">节点与任务</span>
+                <span class="muted small">展开节点以加载任务</span>
+            </div>
+            <NavTree Nodes="_treeNodes"
+                     SelectedId="@_selectedTreeId"
+                     OnSelect="OnTreeSelectAsync"
+                     OnToggle="OnTreeToggleAsync"
+                     SelectableBranches="true"
+                     Searchable="true"
+                     SearchPlaceholder="搜索节点或任务…"
+                     EmptyText="暂无节点"
+                     AriaLabel="节点与计划任务树" />
+        </aside>
+
+        <section class="workbench-main">
+            <div class="scope-card">
+                <div class="scope-card-main">
+                    <span class="scope-eyebrow">当前范围</span>
+                    <strong class="scope-title">@ScopeLabel</strong>
+                    <span class="muted small">
+                        @if (_scopeNodeId is null)
+                        {
+                            <text>聚合全部启用节点的计划任务；批量操作会按节点顺序执行。</text>
+                        }
+                        else
+                        {
+                            <text>仅显示该节点的计划任务；在此新建任务时目标节点会锁定为当前节点。</text>
+                        }
+                    </span>
+                </div>
+                @if (_scopeNodeId is not null)
+                {
+                    <button type="button" class="btn btn-xs" @onclick="SelectRootAsync">查看全部节点</button>
+                }
+            </div>
+
+            <div class="resource-toolbar cronjobs-toolbar">
+                <label class="toolbar-field">
+                    <span class="toolbar-label">分组</span>
+                    <select @bind="_groupFilterValue" @bind:after="ApplyFiltersAsync" disabled="@_loading">
+                        <option value="">全部分组</option>
+                        @foreach (var group in _groups)
+                        {
+                            <option value="@group.Id">@group.Name</option>
+                        }
+                    </select>
+                </label>
+
+                <label class="toolbar-field">
+                    <span class="toolbar-label">状态</span>
+                    <select @bind="_statusFilter" @bind:after="ApplyFiltersAsync" disabled="@_loading">
+                        <option value="">全部</option>
+                        <option value="Enable">启用</option>
+                        <option value="Disable">停用</option>
+                    </select>
+                </label>
+
+                <label class="toolbar-field">
+                    <span class="toolbar-label">排序</span>
+                    <select @bind="_orderBy" @bind:after="ApplyFiltersAsync" disabled="@_loading">
+                        <option value="name">名称</option>
+                        <option value="status">状态</option>
+                        <option value="createdAt">最近记录</option>
+                    </select>
+                </label>
+
+                <label class="toolbar-field">
+                    <span class="toolbar-label">方向</span>
+                    <select @bind="_order" @bind:after="ApplyFiltersAsync" disabled="@_loading">
+                        <option value="null">默认</option>
+                        <option value="ascending">升序</option>
+                        <option value="descending">降序</option>
+                    </select>
+                </label>
+
+                <label class="toolbar-field">
+                    <span class="toolbar-label">搜索</span>
+                    <input class="search-input"
+                           placeholder="任务名称…"
+                           @bind="_searchInput"
+                           @bind:event="oninput"
+                           @onkeydown="OnSearchKeyDown" />
+                </label>
+                <button type="button" class="btn" @onclick="ApplyFiltersAsync" disabled="@_loading">搜索</button>
+                <span class="muted small">每页 @PageSize 条</span>
+            </div>
+
+            @if (_nodesError is not null)
+            {
+                <div class="alert alert-warn">@_nodesError（节点筛选不可用）</div>
+            }
+
+            @if (_error is not null)
+            {
+                <div class="alert alert-error">@_error</div>
+            }
+
+            @if (_groupsError is not null)
+            {
+                <div class="alert alert-warn">@_groupsError（分组筛选不可用）</div>
+            }
+
+            @if (_list is not null)
+            {
+                <div class="cronjob-node-strip">
+                    @foreach (var node in _list.Nodes)
+                    {
+                        <span class="cronjob-node-chip @(node.State == CronjobNodeState.Success ? "is-ok" : "is-failed")">
+                            @node.NodeName
+                            @if (node.State == CronjobNodeState.Success)
+                            {
+                                <span>@node.Total</span>
+                            }
+                            else
+                            {
+                                <span>失败</span>
+                            }
+                        </span>
+                    }
+                </div>
+            }
+
+            <div class="batch-bar">
+                <span class="muted small">已选 @SelectedRows.Count 个任务</span>
+                <label class="toolbar-field">
+                    <span class="toolbar-label">批量操作</span>
+                    <select @bind="_batchOperation" disabled="@(SelectedRows.Count == 0 || _operationBusy)">
+                        <option value="cronjob.enable">启用</option>
+                        <option value="cronjob.disable">停用</option>
+                        <option value="cronjob.run_now">立即执行</option>
+                        <option value="cronjob.delete">删除</option>
+                    </select>
+                </label>
+                <label class="toolbar-field">
+                    <span class="toolbar-label">删除选项</span>
+                    <select @bind="_cleanData" disabled="@(_operationBusy)">
+                        <option value="false">仅删除任务</option>
+                        <option value="true">同时清理备份数据（不可恢复）</option>
+                    </select>
+                </label>
+                <button type="button"
+                        class="btn btn-danger"
+                        disabled="@(SelectedRows.Count == 0 || _operationBusy)"
+                        @onclick="RunBatchOperationAsync">
+                    执行（@SelectedRows.Count）
+                </button>
+                <button type="button" class="btn" disabled="@(SelectedRows.Count == 0)" @onclick="ClearSelection">清空选择</button>
+                <span class="muted small">批量按节点顺序执行、失败停止；批量需要输入确认文本。</span>
+            </div>
+
+            @if (_list is null)
+            {
+                <div class="cronjobs-skeleton" aria-busy="true" aria-label="正在加载计划任务">
+                    @for (var index = 0; index < 6; index++)
+                    {
+                        <div class="skeleton-row">
+                            <span class="skeleton-cell skeleton-cell-sm"></span>
+                            <span class="skeleton-cell"></span>
+                            <span class="skeleton-cell skeleton-cell-md"></span>
+                        </div>
+                    }
+                </div>
+            }
+            else if (_list.Rows.Count == 0)
+            {
+                <div class="resource-empty">
+                    <p>暂无计划任务。</p>
+                    <p class="muted small">可清空筛选条件，或点击「新建任务」创建 Shell 脚本 / 备份网站 / 备份数据库 / 备份目录 / URL 访问等任务。</p>
+                </div>
+            }
+            else
+            {
+                <CronjobTable Rows="_list.Rows"
+                              SelectedKeys="_selected"
+                              HighlightKey="@(_highlightCronjobId is long highlightId ? _scopeNodeId?.ToString("N") + ":" + highlightId : null)"
+                              OnToggle="ToggleRowAsync"
+                              OnSelectAll="SelectAllAsync"
+                              OnEdit="EditAsync"
+                              OnToggleStatus="ToggleStatusAsync"
+                              OnRun="RunNowAsync"
+                              OnDelete="DeleteAsync"
+                              OnRecords="OpenRecordsAsync" />
+
+                <div class="resource-pagination">
+                    <span class="muted small">共 @_list.TotalMatched 条 · 第 @_list.Page/@Math.Max(_list.TotalPages, 1) 页</span>
+                    <div class="actions">
+                        <button type="button" class="btn" @onclick="PreviousPageAsync" disabled="@(_loading || _page <= 1)">上一页</button>
+                        <button type="button" class="btn" @onclick="NextPageAsync" disabled="@(_loading || _page >= Math.Max(_list.TotalPages, 1))">下一页</button>
+                    </div>
+                </div>
+            }
+        </section>
+    </div>
+}
+
+@if (_formOpen)
+{
+    <CronjobForm Nodes="_enabledNodes"
+                 Groups="_groups"
+                 LockedNodeId="_scopeNodeId"
+                 Editing="_editing"
+                 Busy="_operationBusy"
+                 OnSubmit="OnFormSubmitAsync"
+                 OnCancel="CloseForm" />
+}
+
+@if (_recordsRow is not null)
+{
+    <CronjobRecordsPanel NodeId="_recordsRow.NodeId"
+                         CronjobId="_recordsRow.Id"
+                         CronjobName="@_recordsRow.Name"
+                         OnClose="CloseRecords" />
+}
+
+@if (_operationError is not null)
+{
+    <div class="alert alert-error operation-error">
+        <span>@_operationError</span>
+        <button type="button" class="btn btn-xs" @onclick="() => _operationError = null">关闭</button>
+    </div>
+}
+
+@if (_execution is not null)
+{
+    <div class="card operation-panel">
+        <OperationResultView Execution="_execution" />
+        <div class="actions">
+            <button type="button" class="btn" @onclick="DismissExecution">关闭结果</button>
+        </div>
+    </div>
+}
+
+<OperationConfirmDialog Preview="_preview" Busy="_operationBusy" OnConfirm="ConfirmOperationAsync" OnCancel="CancelOperation" />
+
+@code {
+    private const int PageSize = 20;
+    private const int TreeFetchPageSize = 200;
+    private const string PreferenceKey = "pf.tree.cronjobs";
+    private const string RootTreeId = "root";
+
+    [Parameter]
+    public Guid? NodeIdQuery { get; set; }
+
+    [Parameter]
+    public long? CronjobIdQuery { get; set; }
+
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private IReadOnlyList<NodeSummary> _enabledNodes = [];
+    private bool _nodesLoaded;
+    private string? _nodesError;
+    private string? _groupsError;
+
+    private IReadOnlyList<CronjobGroupView> _groups = [];
+    private CronjobListResult? _list;
+    private bool _loading;
+    private string? _error;
+
+    private string _groupFilterValue = string.Empty;
+    private string _statusFilter = string.Empty;
+    private string _orderBy = "name";
+    private string _order = "null";
+    private string? _searchInput;
+    private string? _infoFilter;
+    private int _page = 1;
+
+    private HashSet<string> _selected = [];
+    private string _batchOperation = "cronjob.enable";
+    private bool _cleanData;
+
+    private bool _formOpen;
+    private CronjobDetail? _editing;
+    private CronjobRow? _recordsRow;
+
+    private OperationPreview? _preview;
+    private OperationExecution? _execution;
+    private bool _operationBusy;
+    private string? _operationError;
+
+    private IReadOnlyList<NavTreeNode> _treeNodes = [];
+    private string _selectedTreeId = RootTreeId;
+    private Guid? _scopeNodeId;
+    private long? _highlightCronjobId;
+    private bool _treeOpen;
+    private bool _initialized;
+    private readonly Dictionary<Guid, IReadOnlyList<CronjobRow>> _nodeTasks = [];
+    private readonly HashSet<Guid> _nodeTasksLoading = [];
+
+    private CancellationTokenSource? _cts;
+
+    private CancellationToken Token => _cts?.Token ?? CancellationToken.None;
+
+    private Guid? NodeFilter => _scopeNodeId;
+
+    private bool CanCreate => _nodesLoaded && _enabledNodes.Count > 0;
+
+    private string ScopeLabel => _scopeNodeId is Guid nodeId
+        ? _nodes.FirstOrDefault(node => node.Id.Value == nodeId)?.Name ?? "已选节点"
+        : "全部节点";
+
+    private IReadOnlyList<CronjobRow> SelectedRows =>
+        _list is null ? [] : _list.Rows.Where(row => _selected.Contains(CronjobTable.Key(row))).ToArray();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cts = new CancellationTokenSource();
+        await LoadNodesAsync();
+        BuildTree();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _initialized)
+        {
+            return;
+        }
+
+        _initialized = true;
+
+        if (_nodesLoaded && _enabledNodes.Count == 0)
+        {
+            return;
+        }
+
+        Guid? initialNode = null;
+        long? initialTask = null;
+
+        if (NodeIdQuery is Guid queryNode && IsEnabledNode(queryNode))
+        {
+            initialNode = queryNode;
+            initialTask = CronjobIdQuery;
+        }
+        else
+        {
+            var preferredNode = await ReadPreferenceAsync();
+            if (preferredNode is Guid preferred && IsEnabledNode(preferred))
+            {
+                initialNode = preferred;
+            }
+        }
+
+        await SelectScopeAsync(initialNode, updateUrl: false);
+        if (initialTask is long taskId)
+        {
+            _highlightCronjobId = taskId;
+            await FocusTaskAsync(taskId);
+        }
+
+        await UpdateUrlAsync();
+        await SavePreferenceAsync();
+    }
+
+    public void Dispose() => _cts?.Dispose();
+
+    private async Task LoadNodesAsync()
+    {
+        _nodesError = null;
+        try
+        {
+            var nodes = await NodeService.ListAsync(Token);
+            _nodes = nodes.ToArray();
+            _enabledNodes = nodes.Where(node => node.IsEnabled).ToArray();
+            _nodesLoaded = true;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _nodes = [];
+            _enabledNodes = [];
+            _nodesLoaded = false;
+            _nodesError = "节点列表加载失败：" + exception.Message;
+        }
+    }
+
+    private bool IsEnabledNode(Guid nodeId) =>
+        _nodes.Any(node => node.Id.Value == nodeId && node.IsEnabled);
+
+    private void BuildTree()
+    {
+        var nodeNodes = _nodes.Select(node =>
+        {
+            if (!node.IsEnabled)
+            {
+                return new NavTreeNode
+                {
+                    Id = NodeTreeId(node.Id.Value),
+                    Label = node.Name,
+                    Hint = "节点已禁用",
+                    Kind = NavTreeNodeKind.Branch,
+                    IsDisabled = true,
+                    ChildrenLoaded = true,
+                    Children = []
+                };
+            }
+
+            if (_nodeTasks.TryGetValue(node.Id.Value, out var rows))
+            {
+                return new NavTreeNode
+                {
+                    Id = NodeTreeId(node.Id.Value),
+                    Label = node.Name,
+                    Hint = node.PanelVersion,
+                    BadgeText = rows.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    Kind = NavTreeNodeKind.Branch,
+                    ChildrenLoaded = true,
+                    DefaultExpanded = _scopeNodeId == node.Id.Value,
+                    Children = rows.Select(row => CreateJobNode(node, row)).ToArray()
+                };
+            }
+
+            return new NavTreeNode
+            {
+                Id = NodeTreeId(node.Id.Value),
+                Label = node.Name,
+                Hint = node.PanelVersion,
+                Kind = NavTreeNodeKind.Branch,
+                ChildrenLoaded = false,
+                DefaultExpanded = _scopeNodeId == node.Id.Value,
+                Children = []
+            };
+        }).ToArray();
+
+        _treeNodes =
+        [
+            new NavTreeNode
+            {
+                Id = RootTreeId,
+                Label = "全部节点",
+                Hint = "聚合视图与批量操作",
+                BadgeText = _enabledNodes.Count == 0 ? null : _enabledNodes.Count + " 个节点",
+                Kind = NavTreeNodeKind.Branch,
+                ChildrenLoaded = true,
+                DefaultExpanded = true,
+                Children = nodeNodes
+            }
+        ];
+    }
+
+    private NavTreeNode CreateJobNode(NodeSummary node, CronjobRow row) => new()
+    {
+        Id = JobTreeId(node.Id.Value, row.Id),
+        Label = row.Name,
+        Hint = string.IsNullOrWhiteSpace(row.GroupName) ? row.TypeText : row.GroupName + " · " + row.TypeText,
+        BadgeText = CronjobStatus.IsEnable(row.Status) ? "启用" : "停用",
+        BadgeClass = CronjobStatus.IsEnable(row.Status) ? "badge-ok" : "badge-warn",
+        Kind = NavTreeNodeKind.Leaf
+    };
+
+    private static string NodeTreeId(Guid nodeId) => "node:" + nodeId.ToString("N");
+
+    private static string JobTreeId(Guid nodeId, long jobId) =>
+        "job:" + nodeId.ToString("N") + ":" + jobId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static bool TryParseNodeTreeId(string id, out Guid nodeId)
+    {
+        nodeId = default;
+        return id.StartsWith("node:", StringComparison.Ordinal) && Guid.TryParse(id["node:".Length..], out nodeId);
+    }
+
+    private static bool TryParseJobTreeId(string id, out Guid nodeId, out long jobId)
+    {
+        nodeId = default;
+        jobId = 0;
+        if (!id.StartsWith("job:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var rest = id["job:".Length..];
+        var separator = rest.IndexOf(':');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        return Guid.TryParse(rest[..separator], out nodeId)
+               && long.TryParse(rest[(separator + 1)..], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out jobId);
+    }
+
+    private async Task OnTreeSelectAsync(NavTreeNode node)
+    {
+        if (node.IsDisabled)
+        {
+            return;
+        }
+
+        if (_treeOpen)
+        {
+            _treeOpen = false;
+        }
+
+        if (node.Id == RootTreeId)
+        {
+            await SelectScopeAsync(null);
+            return;
+        }
+
+        if (TryParseNodeTreeId(node.Id, out var nodeId))
+        {
+            await SelectScopeAsync(nodeId);
+            return;
+        }
+
+        if (!TryParseJobTreeId(node.Id, out var jobNodeId, out var jobId))
+        {
+            return;
+        }
+
+        _highlightCronjobId = jobId;
+        if (_scopeNodeId != jobNodeId)
+        {
+            await SelectScopeAsync(jobNodeId, updateUrl: false);
+            _highlightCronjobId = jobId;
+        }
+
+        await FocusTaskAsync(jobId);
+        await UpdateUrlAsync();
+        await SavePreferenceAsync();
+    }
+
+    private async Task OnTreeToggleAsync(NavTreeNode node)
+    {
+        if (node.IsDisabled || !TryParseNodeTreeId(node.Id, out var nodeId))
+        {
+            return;
+        }
+
+        await LoadNodeChildrenAsync(nodeId);
+    }
+
+    private async Task LoadNodeChildrenAsync(Guid nodeId)
+    {
+        if (_nodeTasks.ContainsKey(nodeId) || !_nodeTasksLoading.Add(nodeId))
+        {
+            return;
+        }
+
+        SetTreeNode(nodeId, node => node with { IsLoading = true, Error = null });
+        try
+        {
+            var result = await CronjobService.ListAsync(
+                new CronjobQuery(nodeId, [], null, null, "name", "null", 1, TreeFetchPageSize),
+                Token);
+            _nodeTasks[nodeId] = result.Rows;
+            var node = _nodes.FirstOrDefault(item => item.Id.Value == nodeId) ?? throw new InvalidOperationException("节点不存在。");
+            SetTreeNode(nodeId, existing => existing with
+            {
+                IsLoading = false,
+                ChildrenLoaded = true,
+                Children = result.Rows.Select(row => CreateJobNode(node, row)).ToArray(),
+                BadgeText = result.TotalMatched.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Error = null
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            SetTreeNode(nodeId, node => node with { IsLoading = false, Error = "加载已取消" });
+        }
+        catch (Exception exception)
+        {
+            SetTreeNode(nodeId, node => node with
+            {
+                IsLoading = false,
+                ChildrenLoaded = false,
+                Error = "加载失败，展开可重试：" + exception.Message
+            });
+        }
+        finally
+        {
+            _nodeTasksLoading.Remove(nodeId);
+        }
+    }
+
+    private void SetTreeNode(Guid nodeId, Func<NavTreeNode, NavTreeNode> mutate)
+    {
+        var root = _treeNodes.FirstOrDefault();
+        if (root is null)
+        {
+            return;
+        }
+
+        var target = NodeTreeId(nodeId);
+        _treeNodes =
+        [
+            root with
+            {
+                Children = root.Children.Select(child => child.Id == target ? mutate(child) : child).ToArray()
+            }
+        ];
+    }
+
+    private async Task SelectScopeAsync(Guid? nodeId, bool updateUrl = true)
+    {
+        _operationError = null;
+        _scopeNodeId = nodeId;
+        _selectedTreeId = nodeId is Guid selected ? NodeTreeId(selected) : RootTreeId;
+        _selected.Clear();
+        _highlightCronjobId = null;
+        _groupFilterValue = string.Empty;
+        _page = 1;
+
+        if (nodeId is Guid target)
+        {
+            await LoadNodeChildrenAsync(target);
+        }
+
+        BuildTree();
+        await LoadGroupsAsync();
+        await LoadAsync();
+
+        if (updateUrl)
+        {
+            await UpdateUrlAsync();
+            await SavePreferenceAsync();
+        }
+    }
+
+    private async Task SelectRootAsync()
+    {
+        await SelectScopeAsync(null);
+    }
+
+    private Task FocusTaskAsync(long jobId)
+    {
+        var row = _list?.Rows.FirstOrDefault(item => item.Id == jobId && item.NodeId == _scopeNodeId);
+        if (row is null && _scopeNodeId is Guid nodeId)
+        {
+            row = _nodeTasks.TryGetValue(nodeId, out var rows)
+                ? rows.FirstOrDefault(item => item.Id == jobId)
+                : null;
+        }
+
+        if (row is not null)
+        {
+            _highlightCronjobId = jobId;
+            _recordsRow = row;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadGroupsAsync()
+    {
+        _groupsError = null;
+        try
+        {
+            _groups = await CronjobService.ListGroupsAsync(NodeFilter, Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _groups = [];
+            _groupsError = "加载分组失败：" + exception.Message;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _list = await CronjobService.ListAsync(BuildQuery(), Token);
+            _page = _list.Page;
+            _selected.RemoveWhere(key => _list.Rows.All(row => CronjobTable.Key(row) != key));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _error = "加载计划任务失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private CronjobQuery BuildQuery() => new(
+        NodeFilter,
+        long.TryParse(_groupFilterValue, out var groupId) && groupId > 0 ? [groupId] : [],
+        _infoFilter,
+        string.IsNullOrWhiteSpace(_statusFilter) ? null : _statusFilter,
+        _orderBy,
+        _order,
+        _page,
+        PageSize);
+
+    private async Task RefreshAsync()
+    {
+        _nodeTasks.Clear();
+        await LoadNodesAsync();
+        BuildTree();
+        await LoadGroupsAsync();
+        await LoadAsync();
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _infoFilter = string.IsNullOrWhiteSpace(_searchInput) ? null : _searchInput.Trim();
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await ApplyFiltersAsync();
+        }
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_page <= 1)
+        {
+            return;
+        }
+
+        _page--;
+        await LoadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (_list is null || _page >= Math.Max(_list.TotalPages, 1))
+        {
+            return;
+        }
+
+        _page++;
+        await LoadAsync();
+    }
+
+    private Task ToggleRowAsync(CronjobRow row)
+    {
+        var key = CronjobTable.Key(row);
+        if (!_selected.Remove(key))
+        {
+            _selected.Add(key);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task SelectAllAsync(bool selectAll)
+    {
+        if (_list is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        foreach (var row in _list.Rows)
+        {
+            var key = CronjobTable.Key(row);
+            if (selectAll)
+            {
+                _selected.Add(key);
+            }
+            else
+            {
+                _selected.Remove(key);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void ClearSelection() => _selected.Clear();
+
+    private void ToggleTree() => _treeOpen = !_treeOpen;
+
+    private void CloseTree() => _treeOpen = false;
+
+    private void OpenCreateFormAsync()
+    {
+        _editing = null;
+        _formOpen = true;
+    }
+
+    private async Task EditAsync(CronjobRow row)
+    {
+        _operationError = null;
+        _operationBusy = true;
+        try
+        {
+            _editing = await CronjobService.GetDetailAsync(row.NodeId, row.Id, Token);
+            if (_editing.Error is not null)
+            {
+                _operationError = "读取任务详情失败：" + _editing.Error.Message;
+                return;
+            }
+
+            _formOpen = true;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _operationError = "读取任务详情失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private void CloseForm()
+    {
+        _formOpen = false;
+        _editing = null;
+    }
+
+    private async Task OnFormSubmitAsync(CronjobFormResult result)
+    {
+        var parameters = new JsonObject
+        {
+            ["payload"] = result.Payload
+        };
+        if (result.Id > 0)
+        {
+            parameters["id"] = result.Id;
+        }
+
+        var kind = result.Id > 0 ? "cronjob.update" : "cronjob.create";
+        var invocation = new OperationInvocation(kind, [new NodeId(result.NodeId)], parameters);
+        await PreviewAsync(invocation);
+    }
+
+    private Task ToggleStatusAsync(CronjobRow row) =>
+        PreviewForRowsAsync(
+            CronjobStatus.IsEnable(row.Status) ? "cronjob.disable" : "cronjob.enable",
+            [row]);
+
+    private Task RunNowAsync(CronjobRow row) => PreviewForRowsAsync("cronjob.run_now", [row]);
+
+    private Task DeleteAsync(CronjobRow row) => PreviewForRowsAsync("cronjob.delete", [row]);
+
+    private async Task RunBatchOperationAsync()
+    {
+        var rows = SelectedRows;
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        await PreviewForRowsAsync(_batchOperation, rows);
+    }
+
+    private async Task PreviewForRowsAsync(string kind, IReadOnlyList<CronjobRow> rows)
+    {
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        var parameters = new JsonObject();
+        if (rows.Count == 1 && rows[0] is { } single)
+        {
+            parameters["cronjob"] = single.Id;
+        }
+        else
+        {
+            var byNode = new JsonObject();
+            foreach (var group in rows.GroupBy(row => row.NodeId))
+            {
+                var ids = new JsonArray();
+                foreach (var row in group)
+                {
+                    ids.Add(row.Id);
+                }
+
+                byNode[group.Key.ToString("D")] = ids;
+            }
+
+            parameters["cronjobsByNode"] = byNode;
+        }
+
+        if (kind == "cronjob.delete")
+        {
+            parameters["cleanData"] = _cleanData;
+            parameters["cleanRemoteData"] = false;
+        }
+
+        var nodeIds = rows.Select(row => new NodeId(row.NodeId)).Distinct().ToArray();
+        await PreviewAsync(new OperationInvocation(kind, nodeIds, parameters));
+    }
+
+    private async Task PreviewAsync(OperationInvocation invocation)
+    {
+        _operationError = null;
+        _execution = null;
+        _operationBusy = true;
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            _preview = await WriteOperations.PreviewAsync(invocation, actor, Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (OperationValidationException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (OperationNotSupportedException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _operationError = "预览操作失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private async Task ConfirmOperationAsync(string? typedConfirmation)
+    {
+        if (_preview is null)
+        {
+            return;
+        }
+
+        _operationError = null;
+        _operationBusy = true;
+        try
+        {
+            var actor = await ActorProvider.GetAsync();
+            _execution = await WriteOperations.ExecuteAsync(_preview.TokenId, typedConfirmation, actor, Token);
+            var succeeded = _execution.Status is OperationStatus.Succeeded or OperationStatus.PartiallySucceeded;
+            _preview = null;
+            _selected.Clear();
+            if (succeeded)
+            {
+                CloseForm();
+            }
+
+            _nodeTasks.Clear();
+            BuildTree();
+            await LoadAsync();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (OperationConfirmationException exception)
+        {
+            _operationError = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _operationError = "执行操作失败：" + exception.Message;
+        }
+        finally
+        {
+            _operationBusy = false;
+        }
+    }
+
+    private void CancelOperation() => _preview = null;
+
+    private void DismissExecution() => _execution = null;
+
+    private void OpenRecordsAsync(CronjobRow row) => _recordsRow = row;
+
+    private void CloseRecords() => _recordsRow = null;
+
+    private async Task UpdateUrlAsync()
+    {
+        var query = new List<string>();
+        if (_scopeNodeId is Guid nodeId)
+        {
+            query.Add("nodeId=" + nodeId.ToString("D"));
+        }
+
+        if (_highlightCronjobId is long jobId && _scopeNodeId is Guid)
+        {
+            query.Add("id=" + jobId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        var url = "/cronjobs" + (query.Count == 0 ? string.Empty : "?" + string.Join("&", query));
+        try
+        {
+            await JS.InvokeVoidAsync("history.replaceState", null, "", url);
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task SavePreferenceAsync()
+    {
+        try
+        {
+            var json = new JsonObject
+            {
+                ["treeId"] = _selectedTreeId,
+                ["nodeId"] = _scopeNodeId?.ToString("D")
+            };
+            await JS.InvokeVoidAsync("localStorage.setItem", PreferenceKey, json.ToJsonString());
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task<Guid?> ReadPreferenceAsync()
+    {
+        try
+        {
+            var raw = await JS.InvokeAsync<string?>("localStorage.getItem", PreferenceKey);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var json = JsonNode.Parse(raw);
+            var nodeText = json?["nodeId"]?.GetValue<string?>();
+            return Guid.TryParse(nodeText, out var nodeId) ? nodeId : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}

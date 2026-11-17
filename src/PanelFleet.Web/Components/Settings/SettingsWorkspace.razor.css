@@ -1,0 +1,98 @@
+/* 设置工作台：左侧分类 + 右侧内容；1Panel 区复用全局 .workbench 树/主区布局。 */
+.settings-workspace {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: var(--space-4);
+    align-items: start;
+}
+
+.settings-side-nav {
+    position: sticky;
+    top: calc(var(--topbar-height) + var(--space-4));
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.settings-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    padding: var(--space-3);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out),
+                border-color var(--dur-fast) var(--ease-out),
+                color var(--dur-fast) var(--ease-out);
+}
+
+.settings-nav-item:hover {
+    background: var(--panel-hover);
+}
+
+.settings-nav-item:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.settings-nav-item.is-active {
+    background: var(--primary-soft);
+    border-color: color-mix(in srgb, var(--primary) 28%, transparent);
+    color: var(--primary-dark);
+}
+
+.settings-nav-title {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+}
+
+.settings-nav-desc {
+    color: var(--muted);
+    font-size: var(--fs-xs);
+}
+
+.settings-nav-item.is-active .settings-nav-desc {
+    color: color-mix(in srgb, var(--primary-dark) 70%, var(--muted));
+}
+
+.settings-main {
+    min-width: 0;
+}
+
+/* 1Panel 区：树窄一点，给右侧表单留空间（覆盖全局 .workbench 的 300px 列宽）。 */
+.settings-workbench {
+    grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
+}
+
+@media (max-width: 1023px) {
+    .settings-workspace {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .settings-side-nav {
+        position: static;
+        flex-direction: row;
+        overflow-x: auto;
+        padding: var(--space-1);
+    }
+
+    .settings-nav-item {
+        min-width: 190px;
+        flex: 0 0 auto;
+    }
+
+    .settings-workbench {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

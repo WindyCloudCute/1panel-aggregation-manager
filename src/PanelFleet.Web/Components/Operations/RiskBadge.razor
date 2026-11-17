@@ -1,0 +1,24 @@
+@using PanelFleet.Application.Operations
+
+<span class="risk-badge @CssClass">@Text</span>
+
+@code {
+    [Parameter]
+    public OperationRisk Risk { get; set; }
+
+    private string CssClass => Risk switch
+    {
+        OperationRisk.Low => "risk-low",
+        OperationRisk.Medium => "risk-medium",
+        OperationRisk.High => "risk-high",
+        _ => "risk-critical"
+    };
+
+    private string Text => Risk switch
+    {
+        OperationRisk.Low => "低风险",
+        OperationRisk.Medium => "中风险",
+        OperationRisk.High => "高风险",
+        _ => "严重风险"
+    };
+}

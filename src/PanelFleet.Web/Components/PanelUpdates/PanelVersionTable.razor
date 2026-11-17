@@ -1,0 +1,198 @@
+@using PanelFleet.Application.PanelUpdates
+@using PanelFleet.Web.Components.Shared
+
+@if (Nodes is null || Nodes.Count == 0)
+{
+    <div class="card">
+        <p class="muted">还没有节点。先到 <a href="/nodes/new">添加节点</a> 接入 1Panel，再检查面板更新。</p>
+    </div>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="table update-table">
+            <thead>
+                <tr>
+                    <th class="update-select">选择</th>
+                    <th>节点</th>
+                    <th>状态</th>
+                    <th>当前版本</th>
+                    <th>可用版本</th>
+                    <th>预检</th>
+                    <th>更新说明</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var node in Nodes)
+                {
+                    <tr class="@RowClass(node)">
+                        <td class="update-select">
+                            <input type="checkbox"
+                                   aria-label="选择节点 @node.NodeName"
+                                   checked="@IsSelected(node)"
+                                   disabled="@(Busy || !node.CanUpgrade)"
+                                   @onchange="() => ToggleAsync(node)" />
+                        </td>
+                        <td>
+                            <div class="update-node-name">@node.NodeName</div>
+                            @if (!string.IsNullOrWhiteSpace(node.DiskPath))
+                            {
+                                <div class="muted small">磁盘 @node.DiskPath</div>
+                            }
+                        </td>
+                        <td>
+                            <span class="badge @StatusClass(node)">@StatusText(node)</span>
+                        </td>
+                        <td class="update-version">@(node.CurrentVersion ?? "—")</td>
+                        <td class="update-version">
+                            @if (node.UpdateAvailable)
+                            {
+                                <span class="badge badge-warn">@node.AvailableVersion</span>
+                            }
+                            else
+                            {
+                                <span class="muted">@(node.AvailableVersion ?? "—")</span>
+                            }
+                        </td>
+                        <td class="update-precheck">
+                            <span class="badge @PrecheckClass(node)">@PrecheckText(node)</span>
+                            @if (node.BlockingReasons.Count > 0)
+                            {
+                                <ul class="@(node.AlreadyLatest ? "update-warnings" : "update-reasons")">
+                                    @foreach (var reason in node.BlockingReasons)
+                                    {
+                                        <li>@reason</li>
+                                    }
+                                </ul>
+                            }
+                            @if (node.Warnings.Count > 0)
+                            {
+                                <ul class="update-warnings">
+                                    @foreach (var warning in node.Warnings)
+                                    {
+                                        <li>@warning</li>
+                                    }
+                                </ul>
+                            }
+                        </td>
+                        <td class="update-notes-cell">
+                            @if (string.IsNullOrWhiteSpace(node.ReleaseNote))
+                            {
+                                <span class="muted small">—</span>
+                            }
+                            else
+                            {
+                                <details class="update-notes">
+                                    <summary>查看更新说明</summary>
+                                    <MarkdownView Content="@node.ReleaseNote" MaxLength="4000" />
+                                </details>
+                            }
+                        </td>
+                        <td>
+                            <button type="button"
+                                    class="btn btn-danger"
+                                    disabled="@(Busy || !node.CanUpgrade)"
+                                    @onclick="() => OnUpgrade.InvokeAsync(node)">
+                                单节点升级
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public IReadOnlyList<PanelNodeVersionInfo>? Nodes { get; set; }
+
+    [Parameter]
+    public IReadOnlyCollection<Guid> SelectedNodeIds { get; set; } = Array.Empty<Guid>();
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    /// <summary>与左侧节点树联动高亮的节点。</summary>
+    [Parameter]
+    public Guid? HighlightedNodeId { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnToggleSelection { get; set; }
+
+    [Parameter]
+    public EventCallback<PanelNodeVersionInfo> OnUpgrade { get; set; }
+
+    private bool IsSelected(PanelNodeVersionInfo node) => SelectedNodeIds.Contains(node.NodeId.Value);
+
+    private string RowClass(PanelNodeVersionInfo node)
+    {
+        var classes = new List<string>(2);
+        if (!node.CanUpgrade)
+        {
+            classes.Add("update-row-blocked");
+        }
+
+        if (HighlightedNodeId == node.NodeId.Value)
+        {
+            classes.Add("update-row-highlight");
+        }
+
+        return string.Join(' ', classes);
+    }
+
+    private Task ToggleAsync(PanelNodeVersionInfo node) =>
+        node.CanUpgrade && !Busy ? OnToggleSelection.InvokeAsync(node.NodeId.Value) : Task.CompletedTask;
+
+    private static string StatusText(PanelNodeVersionInfo node) =>
+        !node.NodeEnabled ? "已禁用" : node.Online ? "在线" : "离线";
+
+    private static string StatusClass(PanelNodeVersionInfo node) =>
+        !node.NodeEnabled ? "badge-unknown" : node.Online ? "badge-ok" : "badge-error";
+
+    private static string PrecheckText(PanelNodeVersionInfo node)
+    {
+        if (!node.NodeEnabled)
+        {
+            return "已禁用";
+        }
+
+        if (!node.Online)
+        {
+            return "离线";
+        }
+
+        if (!node.VersionReadable)
+        {
+            return "版本不可读";
+        }
+
+        if (node.AlreadyLatest)
+        {
+            return "已是最新";
+        }
+
+        return node.CanUpgrade ? "可升级" : "预检未通过";
+    }
+
+    private static string PrecheckClass(PanelNodeVersionInfo node)
+    {
+        if (!node.NodeEnabled)
+        {
+            return "badge-unknown";
+        }
+
+        if (!node.Online || !node.VersionReadable)
+        {
+            return "badge-error";
+        }
+
+        if (node.AlreadyLatest)
+        {
+            return "badge-ok";
+        }
+
+        return node.CanUpgrade ? "badge-ok" : "badge-warn";
+    }
+}

@@ -1,0 +1,122 @@
+@using PanelFleet.Domain.Model
+
+@* 安装/升级表单第一步：目标节点。节点上下文发起时锁定，向导发起时必选。 *@
+<div class="node-step @(Locked ? "is-locked" : null)">
+    <div class="node-step-head">
+        <span class="node-step-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="6" rx="2"></rect>
+                <rect x="3" y="14" width="18" height="6" rx="2"></rect>
+                <path d="M7 7h.01M7 17h.01"></path>
+            </svg>
+        </span>
+        <div class="node-step-copy">
+            <div class="node-step-title">步骤 1 · 目标节点</div>
+            <p class="muted small">安装、升级、卸载与配置修改都在单个 1Panel 节点上执行，不支持跨节点写入。</p>
+        </div>
+    </div>
+
+    @if (Locked)
+    {
+        <div class="node-step-locked">
+            <span class="node-step-lock" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="5" y="11" width="14" height="9" rx="2"></rect>
+                    <path d="M8 11V8a4 4 0 1 1 8 0v3"></path>
+                </svg>
+            </span>
+            <span class="health-dot @HealthDotClass"></span>
+            <strong class="node-step-name">@(CurrentNode?.Name ?? "未知节点")</strong>
+            @if (CurrentNode is not null)
+            {
+                <span class="badge @HealthBadgeClass">@HealthText</span>
+            }
+            <span class="badge badge-unknown">已锁定</span>
+            <span class="muted small">从当前节点上下文发起，目标节点已锁定。</span>
+        </div>
+    }
+    else
+    {
+        <div class="form-row">
+            <label class="form-label" for="install-target-node">选择节点 <span class="required">*</span></label>
+            <select id="install-target-node"
+                    value="@(SelectedNodeId?.ToString() ?? string.Empty)"
+                    @onchange="OnChangeAsync"
+                    disabled="@Busy">
+                <option value="">请先选择目标节点</option>
+                @foreach (var node in Nodes)
+                {
+                    <option value="@node.Id.Value" disabled="@(!node.IsEnabled)">
+                        @node.Name · @StatusText(node)
+                    </option>
+                }
+            </select>
+            <span class="muted small">未选择目标节点时无法安装或升级；已停用的节点不可选。</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public IReadOnlyList<NodeSummary> Nodes { get; set; } = [];
+
+    [Parameter]
+    public Guid? SelectedNodeId { get; set; }
+
+    /// <summary>从节点上下文发起时为 true：显示节点信息并锁定，不提供切换。</summary>
+    [Parameter]
+    public bool Locked { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnSelect { get; set; }
+
+    private NodeSummary? CurrentNode => SelectedNodeId is { } id
+        ? Nodes.FirstOrDefault(node => node.Id.Value == id)
+        : null;
+
+    private string HealthDotClass => CurrentNode?.Health switch
+    {
+        NodeHealth.Online => "health-online",
+        NodeHealth.Degraded => "health-degraded",
+        NodeHealth.Offline => "health-offline",
+        _ => "health-unknown"
+    };
+
+    private string HealthBadgeClass => CurrentNode?.Health switch
+    {
+        NodeHealth.Online => "badge-ok",
+        NodeHealth.Degraded => "badge-warn",
+        NodeHealth.Offline => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private string HealthText => CurrentNode?.Health switch
+    {
+        NodeHealth.Online => "在线",
+        NodeHealth.Degraded => "降级",
+        NodeHealth.Offline => "离线",
+        _ => "未知"
+    };
+
+    private static string StatusText(NodeSummary node) =>
+        !node.IsEnabled
+            ? "已停用"
+            : node.Health switch
+            {
+                NodeHealth.Online => "在线",
+                NodeHealth.Degraded => "降级",
+                NodeHealth.Offline => "离线",
+                _ => "健康未知"
+            };
+
+    private async Task OnChangeAsync(ChangeEventArgs args)
+    {
+        if (Guid.TryParse(args.Value?.ToString(), out var nodeId) && nodeId != Guid.Empty)
+        {
+            await OnSelect.InvokeAsync(nodeId);
+        }
+    }
+}

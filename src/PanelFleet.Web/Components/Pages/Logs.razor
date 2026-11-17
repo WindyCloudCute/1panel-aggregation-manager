@@ -1,0 +1,805 @@
+@page "/logs"
+@attribute [Authorize]
+@using PanelFleet.Application.Containers
+@using PanelFleet.Application.Logs
+@using PanelFleet.Application.Websites
+@using PanelFleet.Web.Components.Logs
+@using PanelFleet.Web.Components.Navigation
+@inject ILogService LogService
+@inject INodeService NodeService
+@inject IContainerService ContainerService
+@inject WebsiteService WebsiteService
+
+<PageTitle>系统日志</PageTitle>
+
+<div class="page-header">
+    <h1>系统日志</h1>
+    <div class="actions">
+        @if (_result is not null)
+        {
+            <span class="muted">查询于 @_result.GeneratedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</span>
+        }
+        @if (_loading)
+        {
+            <span class="muted">查询中…</span>
+        }
+        <button type="button" class="btn btn-primary" @onclick="QueryAsync" disabled="@(_loading || !CanQuery)">
+            @(_loading ? "查询中…" : "查询日志")
+        </button>
+    </div>
+</div>
+
+@if (_nodeError is not null)
+{
+    <div class="alert alert-error">@_nodeError</div>
+}
+
+<LogsLayout>
+    <Tree>
+        <div class="tree-panel-head">
+            <strong>节点与日志</strong>
+            <span class="muted">@_nodes.Count 个启用节点</span>
+        </div>
+        @if (_nodes.Count == 0)
+        {
+            <p class="muted">还没有启用的节点。请先在「节点管理」中添加并启用 1Panel 节点。</p>
+        }
+        else
+        {
+            <NavTree Nodes="BuildTreeNodes()"
+                     SelectedId="@_selectedTreeId"
+                     OnSelect="OnTreeSelectAsync"
+                     SelectableBranches="true"
+                     Searchable="true"
+                     SearchPlaceholder="搜索节点或日志类型…"
+                     EmptyText="没有匹配的节点或日志类型"
+                     AriaLabel="节点与日志导航" />
+        }
+        <p class="muted tree-panel-tip">选择节点后可切换日志类型；「全部节点」为聚合只读查询，仅支持面板操作日志与系统日志，不做跨节点混读。</p>
+    </Tree>
+    <ChildContent>
+        <div class="work-head">
+            <div class="work-title">
+                <h2>@(SelectedNode is null ? "全部节点" : SelectedNode.Name)</h2>
+                @if (SelectedNode is not null)
+                {
+                    <span class="health-dot health-@HealthCss(SelectedNode.Health)"></span>
+                    <span class="badge @HealthBadgeClass(SelectedNode.Health)">@HealthText(SelectedNode.Health)</span>
+                }
+                <span class="badge badge-unknown">@LogScopes.Text(CurrentScope)</span>
+                @if (CurrentScope == LogScope.Panel)
+                {
+                    <span class="badge badge-unknown">@PanelLogText</span>
+                }
+            </div>
+            <span class="work-sub muted">@Breadcrumb · @ScopeHint</span>
+        </div>
+
+        @if (_scopeNotice is not null)
+        {
+            <div class="alert alert-warn">@_scopeNotice</div>
+        }
+
+        <div class="work-card">
+            <div class="resource-toolbar">
+                @if (CurrentScope == LogScope.Panel)
+                {
+                    <label class="toolbar-field">
+                        <span class="toolbar-label">面板日志</span>
+                        <select @bind="_panelLog" @bind:after="QueryAsync">
+                            <option value="operation">操作日志</option>
+                            <option value="login">登录日志</option>
+                        </select>
+                    </label>
+                }
+                else if (CurrentScope == LogScope.System)
+                {
+                    <label class="toolbar-field">
+                        <span class="toolbar-label">服务</span>
+                        <select @bind="_service">
+                            <option value="">全部服务</option>
+                            @foreach (var service in _services)
+                            {
+                                <option value="@service">@service</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="toolbar-field">
+                        <span class="toolbar-label">级别</span>
+                        <select @bind="_priority">
+                            <option value="">全部级别</option>
+                            <option value="3">错误</option>
+                            <option value="4">警告</option>
+                            <option value="5">通知</option>
+                            <option value="6">信息</option>
+                            <option value="7">调试</option>
+                        </select>
+                    </label>
+                    <button type="button" class="btn" @onclick="LoadFiltersAsync" disabled="@_filtersLoading">
+                        @(_filtersLoading ? "加载中…" : "刷新过滤项")
+                    </button>
+                }
+                else if (CurrentScope == LogScope.Container)
+                {
+                    @if (_containers.Count > 0)
+                    {
+                        <label class="toolbar-field">
+                            <span class="toolbar-label">容器</span>
+                            <select @bind="_container">
+                                <option value="">请选择容器</option>
+                                @foreach (var container in _containers)
+                                {
+                                    <option value="@container">@container</option>
+                                }
+                            </select>
+                        </label>
+                    }
+                    else
+                    {
+                        <label class="toolbar-field">
+                            <span class="toolbar-label">容器名</span>
+                            <input class="search-input" @bind="_container" placeholder="如 1Panel-jenkins-27im" />
+                        </label>
+                    }
+                    <button type="button" class="btn" @onclick="LoadContainersAsync" disabled="@(_containersLoading || SelectedNode is null)">
+                        @(_containersLoading ? "加载中…" : "加载容器列表")
+                    </button>
+                }
+                else
+                {
+                    @if (_websites.Count > 0)
+                    {
+                        <label class="toolbar-field">
+                            <span class="toolbar-label">网站</span>
+                            <select @bind="_website">
+                                <option value="">请选择网站</option>
+                                @foreach (var website in _websites)
+                                {
+                                    <option value="@website">@website</option>
+                                }
+                            </select>
+                        </label>
+                    }
+                    else
+                    {
+                        <label class="toolbar-field">
+                            <span class="toolbar-label">网站域名</span>
+                            <input class="search-input" @bind="_website" placeholder="example.com 或网站 id" />
+                        </label>
+                    }
+                    <label class="toolbar-field">
+                        <span class="toolbar-label">日志类型</span>
+                        <select @bind="_websiteLogType">
+                            <option value="access">访问日志</option>
+                            <option value="error">错误日志</option>
+                        </select>
+                    </label>
+                    <button type="button" class="btn" @onclick="LoadWebsitesAsync" disabled="@(_websitesLoading || SelectedNode is null)">
+                        @(_websitesLoading ? "加载中…" : "加载网站列表")
+                    </button>
+                }
+
+                <label class="toolbar-field">
+                    <span class="toolbar-label">时间范围</span>
+                    <select @bind="_rangeValue">
+                        <option value="all">全部</option>
+                        <option value="15m">最近 15 分钟</option>
+                        <option value="1h">最近 1 小时</option>
+                        <option value="4h">最近 4 小时</option>
+                        <option value="24h">最近 24 小时</option>
+                    </select>
+                </label>
+                <label class="toolbar-field">
+                    <span class="toolbar-label">关键字</span>
+                    <input class="search-input" @bind="_keyword" @bind:event="oninput" @onkeydown="OnKeywordKeyDown" placeholder="过滤日志内容" />
+                </label>
+                <label class="toolbar-field">
+                    <span class="toolbar-label">行数上限</span>
+                    <select @bind="_limitValue">
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                        <option value="1000">1000</option>
+                        <option value="2000">2000</option>
+                    </select>
+                </label>
+            </div>
+
+            @if (CurrentScope == LogScope.System)
+            {
+                <p class="muted">
+                    系统日志来自 journalctl（需 1Panel 节点支持）；关键字/级别/服务由节点侧过滤，结果按时间倒序。
+                    @if (_files.Count > 0)
+                    {
+                        <text>可用日志文件 @_files.Count 个，最早 @_files.Min()，最新 @_files.Max()。</text>
+                    }
+                </p>
+                @if (_filterError is not null)
+                {
+                    <div class="alert alert-warn">@_filterError</div>
+                }
+            }
+            else if (CurrentScope == LogScope.Container)
+            {
+                <p class="muted">容器日志一次性读取 tail 快照（非实时跟随）；行数上限 2000，超出由节点侧截断。</p>
+                @if (SelectedNode is null)
+                {
+                    <div class="alert alert-warn">容器日志需要先在左侧选择具体节点（「全部节点」为聚合只读查询）。</div>
+                }
+                else if (_containersError is not null)
+                {
+                    <div class="alert alert-warn">@_containersError</div>
+                }
+                else if (_containersLoaded && _containers.Count == 0)
+                {
+                    <p class="muted">该节点暂无容器，可直接输入容器名查询。</p>
+                }
+            }
+            else if (CurrentScope == LogScope.Website)
+            {
+                <p class="muted">网站日志需要节点上存在对应网站；域名会先解析为网站 id 再读取日志。</p>
+                @if (SelectedNode is null)
+                {
+                    <div class="alert alert-warn">网站日志需要先在左侧选择具体节点（「全部节点」为聚合只读查询）。</div>
+                }
+                else if (_websitesError is not null)
+                {
+                    <div class="alert alert-warn">@_websitesError</div>
+                }
+                else if (_websitesLoaded && _websites.Count == 0)
+                {
+                    <p class="muted">该节点暂无网站，可直接输入网站域名查询。</p>
+                }
+            }
+            else if (CurrentScope == LogScope.Panel)
+            {
+                <p class="muted">
+                    面板操作日志与登录日志来自 1Panel 面板自身记录；
+                    @(SelectedNode is null ? "当前为全部启用节点聚合视图（只读汇总，不混读）。" : "当前仅查询所选节点。")
+                </p>
+            }
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        @if (_loading && _result is null)
+        {
+            <div class="skeleton-stack" aria-hidden="true">
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+            </div>
+        }
+        else
+        {
+            <LogResultView Result="_result" Loading="_loading" />
+        }
+    </ChildContent>
+</LogsLayout>
+
+@code {
+    private const int DefaultLimit = 200;
+
+    private static readonly (string Key, string Label, string Hint)[] LogKinds =
+    [
+        ("panel.operation", "面板操作日志", "面板审计与操作记录"),
+        ("panel.login", "登录日志", "面板登录记录"),
+        ("system", "系统日志", "journalctl 系统日志"),
+        ("container", "容器日志", "容器 tail 快照"),
+        ("website", "网站日志", "网站访问/错误日志")
+    ];
+
+    private IReadOnlyList<NodeSummary> _nodes = [];
+    private IReadOnlyList<string> _services = [];
+    private IReadOnlyList<string> _files = [];
+
+    private Guid? _selectedNodeId;
+    private Guid? _expandedNodeId;
+    private string _selectedTreeId = "all";
+
+    private string _scopeValue = "panel";
+    private string _panelLog = "operation";
+    private string _container = string.Empty;
+    private string _website = string.Empty;
+    private string _websiteLogType = "access";
+    private string _rangeValue = "all";
+    private string _keyword = string.Empty;
+    private string _limitValue = DefaultLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private string _service = string.Empty;
+    private string _priority = string.Empty;
+
+    private bool _loading;
+    private bool _filtersLoading;
+    private string? _error;
+    private string? _nodeError;
+    private string? _filterError;
+    private string? _scopeNotice;
+    private LogQueryResult? _result;
+
+    private IReadOnlyList<string> _containers = [];
+    private bool _containersLoading;
+    private bool _containersLoaded;
+    private string? _containersError;
+
+    private IReadOnlyList<string> _websites = [];
+    private bool _websitesLoading;
+    private bool _websitesLoaded;
+    private string? _websitesError;
+
+    [SupplyParameterFromQuery(Name = "type")]
+    public string? Type { get; set; }
+
+    [SupplyParameterFromQuery(Name = "nodeId")]
+    public Guid? NodeId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "container")]
+    public string? Container { get; set; }
+
+    [SupplyParameterFromQuery(Name = "website")]
+    public string? Website { get; set; }
+
+    [SupplyParameterFromQuery(Name = "panelLog")]
+    public string? PanelLog { get; set; }
+
+    [SupplyParameterFromQuery(Name = "logType")]
+    public string? LogType { get; set; }
+
+    [SupplyParameterFromQuery(Name = "keyword")]
+    public string? Keyword { get; set; }
+
+    [SupplyParameterFromQuery(Name = "limit")]
+    public int? Limit { get; set; }
+
+    [SupplyParameterFromQuery(Name = "range")]
+    public string? Range { get; set; }
+
+    private NodeSummary? SelectedNode =>
+        _selectedNodeId is { } nodeId ? _nodes.FirstOrDefault(node => node.Id.Value == nodeId) : null;
+
+    private LogScope CurrentScope =>
+        LogScopes.TryParse(_scopeValue, out var scope) ? scope : LogScope.Panel;
+
+    private string PanelLogText => _panelLog == "login" ? "登录日志" : "操作日志";
+
+    private bool CanQuery =>
+        SelectedNode is not null || CurrentScope is LogScope.Panel or LogScope.System;
+
+    private string Breadcrumb
+    {
+        get
+        {
+            var node = SelectedNode is null ? "全部节点" : SelectedNode.Name;
+            var scope = CurrentScope switch
+            {
+                LogScope.Panel => PanelLogText,
+                LogScope.System => "系统日志",
+                LogScope.Container => "容器日志",
+                _ => "网站日志"
+            };
+            return node + " / " + scope;
+        }
+    }
+
+    private string ScopeHint => CurrentScope switch
+    {
+        LogScope.Panel => SelectedNode is null
+            ? "聚合视图：读取全部启用节点的面板日志（只读汇总，不混读）"
+            : "仅读取所选节点的面板日志",
+        LogScope.System => SelectedNode is null
+            ? "聚合视图：读取全部启用节点的系统日志（只读汇总，不混读）"
+            : "仅读取所选节点的系统日志",
+        LogScope.Container => SelectedNode is null
+            ? "需要先选择具体节点"
+            : "仅读取所选节点上的容器日志",
+        _ => SelectedNode is null
+            ? "需要先选择具体节点"
+            : "仅读取所选节点上的网站日志"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _nodes = (await NodeService.ListAsync(CancellationToken.None))
+                .Where(node => node.IsEnabled)
+                .ToArray();
+        }
+        catch (Exception exception)
+        {
+            _nodeError = "节点列表加载失败：" + exception.Message;
+        }
+
+        _scopeValue = LogScopes.TryParse(Type, out var scope)
+            ? scope.ToString().ToLowerInvariant()
+            : "panel";
+        _container = Container ?? string.Empty;
+        _website = Website ?? string.Empty;
+        _panelLog = string.Equals(PanelLog, "login", StringComparison.OrdinalIgnoreCase) ? "login" : "operation";
+        _websiteLogType = string.Equals(LogType, "error", StringComparison.OrdinalIgnoreCase) ? "error" : "access";
+        _keyword = Keyword ?? string.Empty;
+        _rangeValue = Range is "15m" or "1h" or "4h" or "24h" ? Range : "all";
+        _limitValue = Math.Clamp(Limit ?? DefaultLimit, 1, 2000)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        _selectedNodeId = NodeId is { } nodeId && _nodes.Any(node => node.Id.Value == nodeId)
+            ? nodeId
+            : null;
+
+        if (_selectedNodeId is { } selected)
+        {
+            _expandedNodeId = selected;
+            var kind = CurrentScope switch
+            {
+                LogScope.Panel => _panelLog == "login" ? "panel.login" : "panel.operation",
+                LogScope.System => "system",
+                LogScope.Container => "container",
+                _ => "website"
+            };
+            _selectedTreeId = $"log:{selected:D}:{kind}";
+        }
+        else
+        {
+            _selectedTreeId = "all";
+            if (CurrentScope is LogScope.Container or LogScope.Website)
+            {
+                _scopeNotice = "容器/网站日志需要先在左侧选择具体节点，已切换到面板操作日志。";
+                _scopeValue = "panel";
+                _panelLog = "operation";
+            }
+        }
+
+        if (_scopeValue == "system")
+        {
+            await LoadFiltersAsync();
+        }
+
+        await QueryAsync();
+    }
+
+    private IReadOnlyList<NavTreeNode> BuildTreeNodes()
+    {
+        var root = new NavTreeNode
+        {
+            Id = "all",
+            Label = "全部节点",
+            Hint = "聚合只读查询 · 面板/系统日志",
+            BadgeText = $"{_nodes.Count}",
+            BadgeClass = "badge-unknown",
+            DefaultExpanded = true,
+            Children = _nodes.Select(BuildNodeBranch).ToArray()
+        };
+
+        return [root];
+    }
+
+    private NavTreeNode BuildNodeBranch(NodeSummary node)
+    {
+        var nodeId = node.Id.Value;
+        return new NavTreeNode
+        {
+            Id = $"node:{nodeId:D}",
+            Label = node.Name,
+            Hint = NodeHint(node),
+            BadgeText = HealthText(node.Health),
+            BadgeClass = HealthBadgeClass(node.Health),
+            IsDisabled = !node.IsEnabled,
+            DefaultExpanded = _expandedNodeId == nodeId,
+            Children = LogKinds.Select(kind => new NavTreeNode
+            {
+                Id = $"log:{nodeId:D}:{kind.Key}",
+                Kind = NavTreeNodeKind.Leaf,
+                Label = kind.Label,
+                Hint = kind.Hint
+            }).ToArray()
+        };
+    }
+
+    private async Task OnTreeSelectAsync(NavTreeNode node)
+    {
+        if (node.IsLeaf)
+        {
+            var parts = node.Id.Split(':');
+            if (parts.Length != 3 || !Guid.TryParse(parts[1], out var nodeId))
+            {
+                return;
+            }
+
+            _selectedNodeId = nodeId;
+            _selectedTreeId = node.Id;
+            _expandedNodeId = nodeId;
+            _scopeNotice = null;
+            ApplyKind(parts[2]);
+
+            if (CurrentScope == LogScope.Container && !_containersLoaded)
+            {
+                await LoadContainersAsync();
+            }
+            else if (CurrentScope == LogScope.Website && !_websitesLoaded)
+            {
+                await LoadWebsitesAsync();
+            }
+
+            await LoadFiltersIfNeededAsync();
+            await QueryAsync();
+            return;
+        }
+
+        if (node.Id == "all")
+        {
+            _selectedNodeId = null;
+            _selectedTreeId = "all";
+            _scopeNotice = null;
+            if (CurrentScope is LogScope.Container or LogScope.Website)
+            {
+                _scopeValue = "panel";
+                _panelLog = "operation";
+                _scopeNotice = "「全部节点」为聚合只读查询，容器/网站日志需要先在左侧选择具体节点，已切换到面板操作日志。";
+            }
+
+            await LoadFiltersIfNeededAsync();
+            await QueryAsync();
+            return;
+        }
+
+        if (node.Id.StartsWith("node:", StringComparison.Ordinal)
+            && Guid.TryParse(node.Id[5..], out var branchNodeId))
+        {
+            _selectedNodeId = branchNodeId;
+            _selectedTreeId = node.Id;
+            _expandedNodeId = branchNodeId;
+            _scopeValue = "panel";
+            _panelLog = "operation";
+            _scopeNotice = null;
+            await LoadFiltersIfNeededAsync();
+            await QueryAsync();
+        }
+    }
+
+    private void ApplyKind(string kind)
+    {
+        switch (kind)
+        {
+            case "panel.login":
+                _scopeValue = "panel";
+                _panelLog = "login";
+                break;
+            case "panel.operation":
+                _scopeValue = "panel";
+                _panelLog = "operation";
+                break;
+            case "system":
+                _scopeValue = "system";
+                break;
+            case "container":
+                _scopeValue = "container";
+                break;
+            case "website":
+                _scopeValue = "website";
+                break;
+            default:
+                _scopeValue = "panel";
+                _panelLog = "operation";
+                break;
+        }
+    }
+
+    private async Task LoadFiltersIfNeededAsync()
+    {
+        if (CurrentScope == LogScope.System && _services.Count == 0)
+        {
+            await LoadFiltersAsync();
+        }
+    }
+
+    private async Task LoadFiltersAsync()
+    {
+        _filterError = null;
+        _filtersLoading = true;
+        try
+        {
+            var options = await LogService.GetFilterOptionsAsync(_selectedNodeId, CancellationToken.None);
+            _services = options.Services;
+            _files = options.Files;
+            if (options.NodesFailed > 0)
+            {
+                _filterError = $"{options.NodesFailed}/{options.NodesTotal} 个节点读取过滤项失败。";
+            }
+        }
+        catch (Exception exception)
+        {
+            _services = [];
+            _files = [];
+            _filterError = "加载系统日志过滤项失败：" + exception.Message;
+        }
+        finally
+        {
+            _filtersLoading = false;
+        }
+    }
+
+    private async Task LoadContainersAsync()
+    {
+        if (_selectedNodeId is not { } nodeId || _containersLoading)
+        {
+            return;
+        }
+
+        _containersLoading = true;
+        _containersError = null;
+        try
+        {
+            var result = await ContainerService.ListAsync(
+                new ContainerQuery(nodeId, null, "all", "created_at", "descending", 1, 200),
+                CancellationToken.None);
+            _containers = result.Rows
+                .Select(row => row.Name)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+            _containersLoaded = true;
+        }
+        catch (Exception exception)
+        {
+            _containers = [];
+            _containersLoaded = false;
+            _containersError = "加载容器列表失败，可直接输入容器名：" + exception.Message;
+        }
+        finally
+        {
+            _containersLoading = false;
+        }
+    }
+
+    private async Task LoadWebsitesAsync()
+    {
+        if (_selectedNodeId is not { } nodeId || _websitesLoading)
+        {
+            return;
+        }
+
+        _websitesLoading = true;
+        _websitesError = null;
+        try
+        {
+            var result = await WebsiteService.ListAsync(
+                new WebsiteQuery(nodeId, null, null, 1, 200),
+                CancellationToken.None);
+            _websites = result.Rows
+                .Select(row => row.PrimaryDomain)
+                .Where(domain => !string.IsNullOrWhiteSpace(domain))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(domain => domain, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            _websitesLoaded = true;
+        }
+        catch (Exception exception)
+        {
+            _websites = [];
+            _websitesLoaded = false;
+            _websitesError = "加载网站列表失败，可直接输入网站域名：" + exception.Message;
+        }
+        finally
+        {
+            _websitesLoading = false;
+        }
+    }
+
+    private async Task QueryAsync()
+    {
+        var scope = CurrentScope;
+
+        if (scope is LogScope.Container or LogScope.Website && SelectedNode is null)
+        {
+            _error = scope == LogScope.Container
+                ? "容器日志需要先在左侧选择具体节点。"
+                : "网站日志需要先在左侧选择具体节点。";
+            return;
+        }
+
+        if (scope == LogScope.Container && string.IsNullOrWhiteSpace(_container))
+        {
+            _error = "容器日志查询需要填写容器名。";
+            return;
+        }
+
+        if (scope == LogScope.Website && string.IsNullOrWhiteSpace(_website))
+        {
+            _error = "网站日志查询需要填写网站域名（或网站 id）。";
+            return;
+        }
+
+        _loading = true;
+        _error = null;
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            DateTimeOffset? start = _rangeValue switch
+            {
+                "15m" => now.AddMinutes(-15),
+                "1h" => now.AddHours(-1),
+                "4h" => now.AddHours(-4),
+                "24h" => now.AddHours(-24),
+                _ => null
+            };
+
+            _result = await LogService.QueryAsync(
+                new LogQuery(
+                    scope,
+                    NodeId: _selectedNodeId,
+                    Container: scope == LogScope.Container ? _container : null,
+                    Website: scope == LogScope.Website ? _website : null,
+                    PanelLog: _panelLog,
+                    LogType: _websiteLogType,
+                    StartTime: start,
+                    EndTime: start is null ? null : now,
+                    Keyword: _keyword,
+                    Limit: int.TryParse(_limitValue, out var limit) ? limit : DefaultLimit,
+                    Service: scope == LogScope.System ? _service : null,
+                    Priority: scope == LogScope.System ? _priority : null),
+                CancellationToken.None);
+        }
+        catch (LogValidationException exception)
+        {
+            _error = exception.Message;
+        }
+        catch (LogNodeNotFoundException exception)
+        {
+            _error = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _error = "查询日志失败：" + exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnKeywordKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await QueryAsync();
+        }
+    }
+
+    private static string NodeHint(NodeSummary node)
+    {
+        var parts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(node.PanelVersion))
+        {
+            parts.Add("v" + node.PanelVersion);
+        }
+
+        parts.Add(node.BaseUrl.Host);
+        return string.Join(" · ", parts);
+    }
+
+    private static string HealthText(NodeHealth health) => health switch
+    {
+        NodeHealth.Online => "在线",
+        NodeHealth.Degraded => "降级",
+        NodeHealth.Offline => "离线",
+        _ => "未知"
+    };
+
+    private static string HealthBadgeClass(NodeHealth health) => health switch
+    {
+        NodeHealth.Online => "badge-ok",
+        NodeHealth.Degraded => "badge-warn",
+        NodeHealth.Offline => "badge-error",
+        _ => "badge-unknown"
+    };
+
+    private static string HealthCss(NodeHealth health) => health switch
+    {
+        NodeHealth.Online => "online",
+        NodeHealth.Degraded => "degraded",
+        NodeHealth.Offline => "offline",
+        _ => "unknown"
+    };
+}

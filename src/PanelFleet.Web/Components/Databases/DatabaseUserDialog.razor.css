@@ -1,0 +1,12 @@
+.db-checkbox-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 4px 0;
+}
+
+.db-checkbox-list .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}

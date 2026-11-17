@@ -1,0 +1,60 @@
+@using PanelFleet.Application.Databases
+
+<div class="modal-backdrop" @onclick="OnCancel">
+    <div class="modal" style="max-width: 520px;" @onclick:stopPropagation="true">
+        <h2>修改数据库描述</h2>
+        <p class="muted small">数据库 @DatabaseName（描述仅影响 1Panel 展示，不改库数据）</p>
+
+        <div class="form-row">
+            <label>描述</label>
+            <textarea @bind="_description" rows="3" placeholder="最多 256 字符"></textarea>
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        <div class="actions">
+            <button type="button" class="btn" @onclick="OnCancel">取消</button>
+            <button type="button" class="btn btn-primary" @onclick="SubmitAsync">下一步：预览确认</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _description = string.Empty;
+    private string? _error;
+
+    [Parameter, EditorRequired]
+    public string DatabaseName { get; set; } = string.Empty;
+
+    [Parameter]
+    public string CurrentDescription { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<string> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrEmpty(_description))
+        {
+            _description = CurrentDescription;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (_description.Length > 256)
+        {
+            _error = "描述不能超过 256 个字符。";
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(_description.Trim());
+    }
+}

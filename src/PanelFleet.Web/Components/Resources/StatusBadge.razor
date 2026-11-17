@@ -1,0 +1,13 @@
+@if (string.IsNullOrWhiteSpace(Status))
+{
+    <span class="muted">—</span>
+}
+else
+{
+    <span class="badge @ResourceStatusStyle.CssClass(Status)">@ResourceStatusStyle.Text(Status)</span>
+}
+
+@code {
+    [Parameter]
+    public string? Status { get; set; }
+}
