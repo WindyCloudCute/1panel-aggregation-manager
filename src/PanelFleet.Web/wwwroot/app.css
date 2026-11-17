@@ -1844,62 +1844,6 @@ select {
     flex-wrap: wrap;
 }
 
-.disk-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-}
-
-.disk-row {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    font-size: var(--fs-xs);
-}
-
-.disk-row-head {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-}
-
-.disk-path {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.disk-percent {
-    flex: none;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-}
-
-.disk-row-body {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-}
-
-.disk-usage {
-    flex: none;
-    color: var(--muted);
-    font-size: 11px;
-    white-space: nowrap;
-}
-
-.disk-track {
-    flex: 1;
-    margin-top: 0;
-}
-
-.disk-danger {
-    color: var(--error);
-    font-weight: var(--fw-semibold);
-}
-
 /* 5.2 资源清单 */
 .resource-table {
     min-width: 720px;

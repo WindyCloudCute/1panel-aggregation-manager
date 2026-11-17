@@ -178,6 +178,26 @@ public sealed class SourceHygieneTests
                || extension.Equals(".js", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// 回归：总览节点卡磁盘进度条必须可见。
+    /// 曾经的 bug：app.css 里 P3 时期的全局 .disk-track{flex:1} / .disk-row-body{align-items:center}
+    /// 与新组件列布局冲突，导致进度条 computed 尺寸为 0×0（截图可见文字但无进度条）。
+    /// 约束：全局不再定义 .disk-*；组件自身样式必须给出 stretch/宽度/高度，避免再次被外部规则压扁。
+    /// </summary>
+    [Fact]
+    public void OverviewDiskBars_KeepLayoutGuards()
+    {
+        var appCss = File.ReadAllText(Path.Combine(WebRoot, "wwwroot", "app.css"));
+        Assert.DoesNotContain(".disk-track", appCss, StringComparison.Ordinal);
+        Assert.DoesNotContain(".disk-row-body", appCss, StringComparison.Ordinal);
+
+        var cardCss = File.ReadAllText(
+            Path.Combine(WebRoot, "Components", "Overview", "NodeCard.razor.css"));
+        Assert.Contains("align-items: stretch", cardCss, StringComparison.Ordinal);
+        Assert.Matches(@"\.disk-track\s*\{[^}]*flex:\s*none", cardCss);
+        Assert.Matches(@"\.disk-track\s*\{[^}]*width:\s*100%", cardCss);
+    }
+
     private static List<string> EnumerateSourceFiles()
     {
         var results = new List<string>();
