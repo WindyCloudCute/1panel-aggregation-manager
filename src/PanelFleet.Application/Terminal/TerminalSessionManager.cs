@@ -111,7 +111,7 @@ public sealed partial class TerminalSessionManager : ITerminalSessionManager
             }
             else
             {
-                await EnsureContainerRunnableAsync(client, normalized.Container!, cancellationToken).ConfigureAwait(false);
+                await EnsureContainerRunnableAsync(client, normalized.Container!, record.Name, cancellationToken).ConfigureAwait(false);
             }
 
             resolvedAuthMode = client.AuthState.Resolved ? client.AuthState.EffectiveMode : null;
@@ -241,6 +241,7 @@ public sealed partial class TerminalSessionManager : ITerminalSessionManager
     private static async Task EnsureContainerRunnableAsync(
         IPanelClient client,
         string container,
+        string nodeName,
         CancellationToken cancellationToken)
     {
         var result = await client
@@ -264,13 +265,17 @@ public sealed partial class TerminalSessionManager : ITerminalSessionManager
                 : new TerminalUpstreamException("container_check_failed", "无法读取节点容器列表，暂时无法打开容器终端。");
         }
 
-        var match = result.Data?.Items?.FirstOrDefault(item =>
+        var items = result.Data?.Items ?? [];
+        var match = items.FirstOrDefault(item =>
             string.Equals(item.Name, container, StringComparison.OrdinalIgnoreCase)
             || string.Equals(item.ContainerID, container, StringComparison.OrdinalIgnoreCase));
 
         if (match is null)
         {
-            throw new TerminalNotFoundException("container_not_found", "容器不存在，或不属于该节点。");
+            throw new TerminalNotFoundException(
+                "container_not_found",
+                $"容器「{container}」不在节点「{nodeName}」上（该节点当前可读取 {items.Count} 个容器）。"
+                + "容器可能已删除、重建或更名；请关闭本窗口，刷新容器列表后重新点击「打开终端」。");
         }
 
         if (!string.Equals(match.State, "running", StringComparison.OrdinalIgnoreCase))

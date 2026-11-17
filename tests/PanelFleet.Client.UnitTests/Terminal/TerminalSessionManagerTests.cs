@@ -162,6 +162,21 @@ public sealed class TerminalSessionManagerTests
     }
 
     [Fact]
+    public async Task Open_Container_WhenNotFound_MentionsNodeAndContainer()
+    {
+        var fixture = Create();
+        ConfigureContainers(fixture);
+
+        var exception = await Assert.ThrowsAsync<TerminalNotFoundException>(
+            () => fixture.Manager.OpenAsync(ContainerRequest(fixture.Node.Id, "PHP-8030"), ActorInfo.System, CancellationToken.None));
+
+        Assert.Equal("container_not_found", exception.Code);
+        Assert.Contains("PHP-8030", exception.Message);
+        Assert.Contains(fixture.Node.Name, exception.Message);
+        Assert.Contains("0 个容器", exception.Message);
+    }
+
+    [Fact]
     public async Task Open_Container_WhenNotRunning_Throws()
     {
         var fixture = Create();

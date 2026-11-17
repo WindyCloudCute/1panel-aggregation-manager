@@ -1658,21 +1658,36 @@ else
 
     private async Task SelectContainerLeafAsync(Guid nodeId, string name)
     {
+        var leafId = ContainerLeafId(nodeId, name);
+        if (string.Equals(_selectedTreeId, leafId, StringComparison.Ordinal)
+            && _preview is not null
+            && _activeRowKey is not null)
+        {
+            // 重复点击同一个容器：不再刷新任何数据（避免反复请求、页面闪动）。
+            return;
+        }
+
         _treeOpen = false;
         _tab = "containers";
         _nodeFilterValue = nodeId.ToString();
-        _selectedTreeId = ContainerLeafId(nodeId, name);
+        _selectedTreeId = leafId;
         _expandRequest.Add(NodeKey(nodeId));
         _searchInput = name;
         _nameFilter = name;
         _page = 1;
         _activeComposeKey = null;
 
-        await EnsureNodeContainersAsync(nodeId);
-        await LoadContainersAsync();
-
         var row = _containers?.Rows.FirstOrDefault(item =>
             item.NodeId == nodeId && string.Equals(item.Name, name, StringComparison.Ordinal));
+
+        if (row is null)
+        {
+            await EnsureNodeContainersAsync(nodeId);
+            await LoadContainersAsync();
+
+            row = _containers?.Rows.FirstOrDefault(item =>
+                item.NodeId == nodeId && string.Equals(item.Name, name, StringComparison.Ordinal));
+        }
         if (row is null)
         {
             _activeRowKey = null;

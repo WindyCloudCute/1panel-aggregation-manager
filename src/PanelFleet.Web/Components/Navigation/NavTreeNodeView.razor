@@ -103,12 +103,13 @@
     public EventCallback<NavTreeNode> OnToggle { get; set; }
 
     private bool _open;
+    private bool _defaultExpandedApplied;
 
     private bool IsSelected => string.Equals(SelectedId, Node.Id, StringComparison.Ordinal);
 
     private bool HasFilter => !string.IsNullOrWhiteSpace(Filter);
 
-    private bool IsOpen => _open || HasFilter || Node.DefaultExpanded;
+    private bool IsOpen => _open || HasFilter;
 
     private IReadOnlyList<NavTreeNode> VisibleChildren =>
         HasFilter
@@ -118,14 +119,17 @@
     protected override void OnInitialized()
     {
         _open = Node.DefaultExpanded;
+        _defaultExpandedApplied = true;
     }
 
     protected override void OnParametersSet()
     {
-        // 页面异步加载完子项后，自动展开；页面也可通过 DefaultExpanded 控制。
-        if (Node.DefaultExpanded)
+        // DefaultExpanded 只在首次出现时生效：否则页面重建子项后会把用户手动收起的分支重新拉开，
+        // 表现为「点一下没反应 / 收起后又弹开」。
+        if (!_defaultExpandedApplied && Node.DefaultExpanded)
         {
             _open = true;
+            _defaultExpandedApplied = true;
         }
     }
 

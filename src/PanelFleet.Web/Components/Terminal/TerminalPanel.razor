@@ -197,9 +197,16 @@
             _container = Container.Trim();
         }
 
-        var preferred = NodeId is { } requested && _nodes.Any(node => node.Id.Value == requested)
-            ? requested
-            : _nodes.FirstOrDefault()?.Id.Value;
+        var requestedNode = NodeId;
+        if (requestedNode is { } requested && _nodes.All(node => node.Id.Value != requested))
+        {
+            // 目标节点不存在、已禁用或已被删除：明确报错，绝不静默改连第一个节点（会把容器名带到错误节点上）。
+            _error = "指定的节点当前不可用（可能已禁用或删除），无法打开终端。请关闭窗口后在终端页重新选择节点。";
+            _autoConnect = false;
+            return;
+        }
+
+        var preferred = requestedNode ?? _nodes.FirstOrDefault()?.Id.Value;
         _selectedNodeId = preferred;
         _selectedNodeValue = preferred?.ToString("D") ?? string.Empty;
 
